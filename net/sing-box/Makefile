@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sing-box
 PKG_VERSION:=1.12.22
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/SagerNet/sing-box/tar.gz/v$(PKG_VERSION)?
@@ -12,17 +12,34 @@ PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=Van Waholtz <brvphoenix@gmail.com>
 
-PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_DEPENDS:=golang/host upx/host
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 
 GO_PKG:=github.com/sagernet/sing-box
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/sing-box
 
+GO_PKG_LDFLAGS:=-s -w
 GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
-include ../../lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+
+# --- UPX support ---
+UPX:=$(STAGING_DIR_HOST)/bin/upx
+UPX_AVAILABLE:=$(shell [ -x "$(UPX)" ] && echo yes || echo no)
+
+ifeq ($(UPX_AVAILABLE),yes)
+define upxcompress
+	@echo "Compressing $(1) with UPX..."
+	$(UPX) --lzma --best $(1)
+endef
+else
+define upxcompress
+	@echo "UPX not found at $(UPX), skipping compression"
+endef
+endif
+# -------------------
 
 define Package/sing-box-default
   TITLE:=The universal proxy platform
@@ -76,26 +93,30 @@ define Package/sing-box/config
 			bool "Build with standard gRPC support"
 
 		config SINGBOX_WITH_GVISOR
-			bool "Build with gVisor support"
-			default y
+			bool "Build with gVisor support (userspace network stack, not needed with kmod-tun)"
+			default n
 
 		config SINGBOX_WITH_QUIC
-			bool "Build with QUIC support"
+			bool "Build with QUIC support (needed for Hysteria, TUIC)"
 			default y
 
 		config SINGBOX_WITH_TAILSCALE
 			bool "Build with Tailscale support"
-			default y
+			default n
 
 		config SINGBOX_WITH_UTLS
 			bool "Build with uTLS support for TLS outbound"
 			default y
 
+		config SINGBOX_WITH_WIREGUARD
+			bool "Build with WireGuard support"
+			default y
+
 		config SINGBOX_WITH_V2RAY_API
 			bool "Build with V2Ray API support"
 
-		config SINGBOX_WITH_WIREGUARD
-			bool "Build with WireGuard support"
+		config SINGBOX_UPX
+			bool "Compress binary with UPX (saves ~60%, adds startup delay on slow CPUs)"
 			default y
 	endmenu
 endef
@@ -111,7 +132,8 @@ PKG_CONFIG_DEPENDS:= \
 	CONFIG_SINGBOX_WITH_TAILSCALE \
 	CONFIG_SINGBOX_WITH_UTLS \
 	CONFIG_SINGBOX_WITH_V2RAY_API \
-	CONFIG_SINGBOX_WITH_WIREGUARD
+	CONFIG_SINGBOX_WITH_WIREGUARD \
+	CONFIG_SINGBOX_UPX
 
 ifeq ($(BUILD_VARIANT),tiny)
 ifeq ($(CONFIG_SMALL_FLASH),)
@@ -144,6 +166,7 @@ Package/sing-box-tiny/conffiles=$(Package/sing-box/conffiles)
 define Package/sing-box/install
 	$(INSTALL_DIR) $(1)/usr/bin/
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/sing-box $(1)/usr/bin/sing-box
+	$(if $(CONFIG_SINGBOX_UPX),$(call upxcompress,$(1)/usr/bin/sing-box))
 
 	$(INSTALL_DIR) $(1)/etc/sing-box
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/release/config/config.json $(1)/etc/sing-box
