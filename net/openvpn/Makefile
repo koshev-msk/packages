@@ -27,6 +27,10 @@ PKG_BUILD_FLAGS:=gc-sections
 PKG_LICENSE:=GPL-2.0
 PKG_CPE_ID:=cpe:/a:openvpn:openvpn
 
+ifneq ($(filter %-xor,$(BUILD_VARIANT)),)
+PATCH_DIR:=./patches-xor
+endif
+
 include $(INCLUDE_DIR)/package.mk
 
 define Package/openvpn/Default
@@ -41,8 +45,8 @@ define Package/openvpn/Default
 	   +OPENVPN_$(1)_ENABLE_LZO:liblzo \
 	   +OPENVPN_$(1)_ENABLE_LZ4:liblz4 \
 	   +OPENVPN_$(1)_ENABLE_IPROUTE2:ip \
-	   +OPENVPN_$(1)_ENABLE_DCO:libnl-genl \
-	   +OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports \
+	   $(if $(filter %-xor,$(1)),,+OPENVPN_$(1)_ENABLE_DCO:libnl-genl) \
+	   $(if $(filter %-xor,$(1)),,+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports) \
 	   $(3)
   VARIANT:=$(1)
   DEFAULT_VARIANT:=$(4)
@@ -53,6 +57,10 @@ Package/openvpn-openssl=$(call Package/openvpn/Default,openssl,OpenSSL,+PACKAGE_
 Package/openvpn-mbedtls=$(call Package/openvpn/Default,mbedtls,mbedTLS,+PACKAGE_openvpn-mbedtls:libmbedtls,1)
 Package/openvpn-wolfssl=$(call Package/openvpn/Default,wolfssl,WolfSSL,+PACKAGE_openvpn-wolfssl:libwolfssl @BROKEN)
 
+Package/openvpn-openssl-xor=$(call Package/openvpn/Default,openssl-xor,OpenSSL with XOR patch,+PACKAGE_openvpn-openssl-xor:libopenssl)
+Package/openvpn-mbedtls-xor=$(call Package/openvpn/Default,mbedtls-xor,mbedTLS with XOR patch,+PACKAGE_openvpn-mbedtls-xor:libmbedtls)
+Package/openvpn-wolfssl-xor=$(call Package/openvpn/Default,wolfssl-xor,WolfSSL with XOR patch,+PACKAGE_openvpn-wolfssl-xor:libwolfssl @BROKEN)
+
 define Package/openvpn/config/Default
 	source "$(SOURCE)/Config-$(1).in"
 endef
@@ -61,6 +69,10 @@ Package/openvpn-openssl/config=$(call Package/openvpn/config/Default,openssl)
 Package/openvpn-mbedtls/config=$(call Package/openvpn/config/Default,mbedtls)
 Package/openvpn-wolfssl/config=$(call Package/openvpn/config/Default,wolfssl)
 
+Package/openvpn-openssl-xor/config=$(call Package/openvpn/config/Default,openssl)
+Package/openvpn-mbedtls-xor/config=$(call Package/openvpn/config/Default,mbedtls)
+Package/openvpn-wolfssl-xor/config=$(call Package/openvpn/config/Default,wolfssl)
+
 ifeq ($(BUILD_VARIANT),mbedtls)
 CONFIG_OPENVPN_MBEDTLS:=y
 endif
@@ -68,6 +80,15 @@ ifeq ($(BUILD_VARIANT),openssl)
 CONFIG_OPENVPN_OPENSSL:=y
 endif
 ifeq ($(BUILD_VARIANT),wolfssl)
+CONFIG_OPENVPN_WOLFSSL:=y
+endif
+ifeq ($(BUILD_VARIANT),mbedtls-xor)
+CONFIG_OPENVPN_MBEDTLS:=y
+endif
+ifeq ($(BUILD_VARIANT),openssl-xor)
+CONFIG_OPENVPN_OPENSSL:=y
+endif
+ifeq ($(BUILD_VARIANT),wolfssl-xor)
 CONFIG_OPENVPN_WOLFSSL:=y
 endif
 
@@ -90,7 +111,10 @@ define Build/Configure
 		$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_FRAGMENT),--enable,--disable)-fragment \
 		$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_IPROUTE2),--enable,--disable)-iproute2 \
 		$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_PORT_SHARE),--enable,--disable)-port-share \
-		$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_DCO),--enable,--disable)-dco \
+		$(if $(filter %-xor,$(BUILD_VARIANT)), \
+			--disable-dco, \
+			$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_DCO),--enable,--disable)-dco \
+		) \
 		$(if $(CONFIG_OPENVPN_OPENSSL),--with-crypto-library=openssl --with-openssl-engine=no) \
 		$(if $(CONFIG_OPENVPN_MBEDTLS),--with-crypto-library=mbedtls) \
 		$(if $(CONFIG_OPENVPN_WOLFSSL),--with-crypto-library=wolfssl) \
@@ -155,6 +179,12 @@ define Package/openvpn-$(BUILD_VARIANT)/install
 		$(1)/etc/hotplug.d/openvpn/
 endef
 
-$(eval $(call BuildPackage,openvpn-openssl))
-$(eval $(call BuildPackage,openvpn-mbedtls))
-$(eval $(call BuildPackage,openvpn-wolfssl))
+ifeq ($(OPENVPN_BUILD_WITH_XOR),1)
+  $(eval $(call BuildPackage,openvpn-openssl-xor))
+  $(eval $(call BuildPackage,openvpn-mbedtls-xor))
+  $(eval $(call BuildPackage,openvpn-wolfssl-xor))
+else
+  $(eval $(call BuildPackage,openvpn-openssl))
+  $(eval $(call BuildPackage,openvpn-mbedtls))
+  $(eval $(call BuildPackage,openvpn-wolfssl))
+endif
