@@ -43,7 +43,8 @@ PKG_MOD_EXTRA := \
 # official and 3rd-party modules
 PKG_MOD_ALL := \
 	$(PKG_MOD_EXTRA) \
-	stream
+	stream \
+	http-xslt
 PKG_MOD_PATCHED := $(shell find patches -mindepth 1 -maxdepth 1 -type d -name 'nginx-mod-*' | sed -E 's,^patches/nginx-mod-,,')
 
 PKG_CONFIG_DEPENDS := \
@@ -177,6 +178,7 @@ define Package/nginx-full
     +libpcre2 \
     +libpthread \
     +libxml2 \
+    +libxslt \
     +nginx-ssl-util \
     +zlib
   EXTRA_DEPENDS:=nginx-ssl-util (>=1.5-r1)
@@ -489,6 +491,7 @@ CONFIGURE_ARGS += \
 	$(if $(call IsEnabled,NGINX_HTTP_REAL_IP),--with-http_realip_module) \
 	$(if $(call IsEnabled,NGINX_HTTP_SECURE_LINK),--with-http_secure_link_module) \
 	$(if $(call IsEnabled,NGINX_HTTP_SUB),--with-http_sub_module) \
+	$(if $(CONFIG_PACKAGE_nginx-mod-http-xslt),--with-http_xslt_module=dynamic) \
 	$(if $(CONFIG_PACKAGE_nginx-mod-stream),--with-stream=dynamic --with-stream_ssl_module --with-stream_ssl_preread_module) \
 	$(if $(call IsEnabled,NGINX_STREAM_REAL_IP),--with-stream_realip_module) \
 	$(if $(CONFIG_PACKAGE_nginx-mod-naxsi),--add-dynamic-module=$(PKG_BUILD_DIR)/nginx-mod-naxsi/naxsi_src) \
@@ -503,6 +506,8 @@ $(eval $(call BuildPackage,nginx-mod-lua-resty-lrucache))
 $(eval $(call BuildPackage,nginx-mod-lua-resty-core))
 $(eval $(call BuildModule,stream,+@NGINX_STREAM_CORE_MODULE, \
 	ngx_stream, Add support for NGINX request streaming.))
+$(eval $(call BuildModule,http-xslt,+libxml2 +libxslt,ngx_http_xslt_filter, \
+	Is a module filter that transforms XML responses using one or more XSLT stylesheets))
 $(eval $(call BuildModule,lua,+nginx-mod-lua-resty-core,ngx_http_lua, \
 	Enable Lua module (luajit2 based, OpenResty patches)))
 $(eval $(call BuildModule,ubus,+libubus +libjson-c +libblobmsg-json, \
