@@ -68,10 +68,10 @@ index 0000000..5fb76e0
 +
 diff --git a/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c
 new file mode 100755
-index 0000000..fe2f39a
+index 0000000..8b0d10f
 --- /dev/null
 +++ b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c
-@@ -0,0 +1,621 @@
+@@ -0,0 +1,695 @@
 +/*
 + * This program is free software; you can redistribute it and/or modify
 + * it under the terms of the GNU General Public License as published by
@@ -385,6 +385,37 @@ index 0000000..fe2f39a
 +}
 +
 +
++static gchar *
++gateway_from_address_30 (const gchar *address)
++{
++    /* Fallback used only when AT+CGCONTRDP doesn't hand us a usable
++     * gateway. Treat the address as living in a /30: floor the last
++     * octet to the 4-address block boundary, then use network+1 as
++     * the gateway - unless that's our own address (we're the .1
++     * host ourselves), in which case fall back to network+2, the
++     * other usable host in that /30. Never returns gateway == our
++     * own address. */
++    gchar **octets;
++    gchar *gw = NULL;
++    int last, floor4, candidate;
++
++    octets = g_strsplit (address, ".", -1);
++    if (g_strv_length (octets) != 4) {
++        g_strfreev (octets);
++        return NULL;
++    }
++
++    last = atoi (octets[3]);
++    floor4 = last - (last % 4);
++    candidate = floor4 + 1;
++    if (candidate == last)
++        candidate = floor4 + 2;
++
++    gw = g_strdup_printf ("%s.%s.%s.%d", octets[0], octets[1], octets[2], candidate);
++    g_strfreev (octets);
++    return gw;
++}
++
 +gboolean
 +parse_ip (const gchar *response,
 +                               MMBearerIpConfig *out_ip4_config,
@@ -437,8 +468,18 @@ index 0000000..fe2f39a
 +    {
 +	    ipv4=ip1; mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC); 
 +	    mm_bearer_ip_config_set_address (out_ip4_config, ipv4); 
-+	    mm_bearer_ip_config_set_prefix (out_ip4_config, 32); 
-+	    mm_bearer_ip_config_set_gateway(out_ip4_config, ipv4);
++	    mm_bearer_ip_config_set_prefix (out_ip4_config, 30);
++	    {
++	        /* Provisional gateway - overridden with the real value from
++	         * AT+CGCONTRDP in ip_config_dns_gw_ready() if that command
++	         * actually reports one; this is only the fallback used when
++	         * it doesn't. */
++	        gchar *gw = gateway_from_address_30 (ipv4);
++	        if (gw) {
++	            mm_bearer_ip_config_set_gateway (out_ip4_config, gw);
++	            g_free (gw);
++	        }
++	    }
 +    }
 +    if(c>5)
 +    {
@@ -453,8 +494,14 @@ index 0000000..fe2f39a
 +    {
 +        ipv4=ip2; mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC);
 +        mm_bearer_ip_config_set_address (out_ip4_config, ipv4);
-+        mm_bearer_ip_config_set_prefix (out_ip4_config, 32);
-+        mm_bearer_ip_config_set_gateway(out_ip4_config, ipv4);
++        mm_bearer_ip_config_set_prefix (out_ip4_config, 30);
++        {
++            gchar *gw = gateway_from_address_30 (ipv4);
++            if (gw) {
++                mm_bearer_ip_config_set_gateway (out_ip4_config, gw);
++                g_free (gw);
++            }
++        }
 +    }
 +    if(c>5)
 +    {
@@ -477,6 +524,7 @@ index 0000000..fe2f39a
 +    MMBaseModem *modem;
 +    MMPortSerialAt *primary;
 +    guint cid;
++    MMBearerIpFamily ip_family;
 +    MMBearerIpConfig *ipv4_config;
 +    MMBearerIpConfig* ipv6_config;
 +
@@ -532,6 +580,7 @@ index 0000000..fe2f39a
 +    gchar* dns2;
 +    gchar* dnsv61;
 +    gchar* dnsv62;
++    gchar* gw;
 +    const gchar* dns[3] = { 0 };
 +    const gchar* dnsv6[3] = { 0 };
 +    GString* s;
@@ -558,13 +607,20 @@ index 0000000..fe2f39a
 +    c= g_strv_length(data);
 +
 +
-+    if (c<30) { g_task_return_new_error(task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't match +cgcontrdp reply");   return; }
++    if (c<30) { g_task_return_new_error(task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't match +cgcontrdp reply");  g_object_unref (task); return; }
 +
 +    dns1=data[5];
 +    dns2=data[6];
 +    dnsv61=data[28];
 +    dnsv62=data[29];
++    gw = data[4];
 +    g_free(data);
++
++    /* Prefer the real gateway reported by AT+CGCONTRDP; only fall
++     * back to the address-derived guess (already set in parse_ip)
++     * when the modem doesn't actually give us one. */
++    if (gw && *gw)
++        mm_bearer_ip_config_set_gateway (ctx->ipv4_config, gw);
 +
 +    gstmp = g_string_new("");
 +    deztohexip(dnsv61, gstmp);
@@ -589,9 +645,26 @@ index 0000000..fe2f39a
 +    dnsv6[1] = dnsv62;
 +
 +	mm_bearer_ip_config_set_dns(ctx->ipv4_config, (const gchar **) &dns);
-+    mm_bearer_ip_config_set_dns(ctx->ipv6_config, (const gchar **) &dnsv6);
 +
-+    connect_result = mm_bearer_connect_result_new(mm_base_modem_peek_best_data_port(modem, MM_PORT_TYPE_NET), ctx->ipv4_config, ctx->ipv6_config); 
++    /* Only report an IPv6 config if the caller actually asked for
++     * IPv6/IPv4v6 AND parse_ip() actually found a real IPv6 address
++     * (method != UNKNOWN means it did). Previously this unconditionally
++     * populated DNS on ctx->ipv6_config and handed it back regardless
++     * of what was requested or whether an address existed - MM would
++     * then see a non-null ipv6 config (DNS set, no address) and try to
++     * apply it, which is exactly "always tries to get IPv6 no matter
++     * what ip_type was chosen". */
++    {
++        gboolean ipv6_requested = (ctx->ip_family & (MM_BEARER_IP_FAMILY_IPV6 | MM_BEARER_IP_FAMILY_IPV4V6)) != 0;
++        gboolean ipv6_found = (mm_bearer_ip_config_get_method (ctx->ipv6_config) != MM_BEARER_IP_METHOD_UNKNOWN);
++
++        if (ipv6_requested && ipv6_found)
++            mm_bearer_ip_config_set_dns (ctx->ipv6_config, (const gchar **) &dnsv6);
++
++        connect_result = mm_bearer_connect_result_new (mm_base_modem_peek_best_data_port (modem, MM_PORT_TYPE_NET),
++                                                        ctx->ipv4_config,
++                                                        (ipv6_requested && ipv6_found) ? ctx->ipv6_config : NULL);
++    }
 +
 +    g_task_return_pointer (task,
 +                           connect_result,
@@ -675,6 +748,7 @@ index 0000000..fe2f39a
 +    ctx->modem = MM_BASE_MODEM (g_object_ref (modem));
 +    ctx->primary = g_object_ref (primary);
 +    ctx->cid = cid;
++    ctx->ip_family = ip_family;
 +
 +    task = g_task_new (self, NULL, callback, user_data);
 +    g_task_set_task_data (task, ctx, (GDestroyNotify)get_ip_config_context_free);
