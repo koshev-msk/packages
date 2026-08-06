@@ -656,7 +656,7 @@ index 0000000..58a2e40
 +    if (ipv4) {
 +        mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC);
 +        mm_bearer_ip_config_set_address (out_ip4_config, ipv4);
-+        mm_bearer_ip_config_set_prefix (out_ip4_config, 30);
++        mm_bearer_ip_config_set_prefix (out_ip4_config, 24);
 +        /* Real gateway comes from AT+CGCONTRDP (see ip_config_dns_gw_ready),
 +         * NOT from here - setting gateway == our own address made netifd
 +         * try "ip route add default via <our-own-ip>", which the kernel
@@ -681,7 +681,7 @@ index 0000000..58a2e40
 +        if (ipv4) {
 +            mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC);
 +            mm_bearer_ip_config_set_address (out_ip4_config, ipv4);
-+            mm_bearer_ip_config_set_prefix (out_ip4_config, 30);
++            mm_bearer_ip_config_set_prefix (out_ip4_config, 24);
 +            g_free (ipv4);
 +            ipv4 = NULL;
 +        }
