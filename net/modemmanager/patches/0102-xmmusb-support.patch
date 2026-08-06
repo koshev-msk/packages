@@ -1007,7 +1007,7 @@ new file mode 100644
 index 0000000..5118b06
 --- /dev/null
 +++ b/src/plugins/xmmusb/mm-broadband-modem-xmmusb.c
-@@ -0,0 +1,896 @@
+@@ -0,0 +1,898 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * Registration, signal quality (+CSQ), operator selection (+COPS) etc.
@@ -1873,6 +1873,8 @@ index 0000000..5118b06
 +    iface->load_power_state_finish = load_power_state_finish;
 +    iface->modem_power_down = modem_power_down;
 +    iface->modem_power_down_finish = modem_power_down_finish;
++    iface->setup_charset = NULL;
++    iface->setup_charset_finish = NULL;
 +}
 +
 +static void
