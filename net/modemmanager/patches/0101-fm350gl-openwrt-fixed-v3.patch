@@ -1,8 +1,7 @@
-diff --git a/meson.build b/meson.build
-index 4cccc00..2bb89d6 100644
---- a/meson.build
-+++ b/meson.build
-@@ -369,6 +369,7 @@ plugins_options_reqs = {
+diff -Naur modemmanager-1.24.0/meson.build modemmanager-1.24.0-patched/meson.build
+--- modemmanager-1.24.0/meson.build	2025-04-10 04:30:25.000000000 +0300
++++ modemmanager-1.24.0-patched/meson.build	2026-08-16 21:50:49.319768378 +0300
+@@ -369,6 +369,7 @@
    'wavecom': {'available': true, 'shared': []},
    'x22x': {'available': true, 'shared': []},
    'zte': {'available': true, 'shared': ['icera']},
@@ -10,20 +9,17 @@ index 4cccc00..2bb89d6 100644
  }
  
  plugins_shared = {}
-diff --git a/meson_options.txt b/meson_options.txt
-index c0609fe..face517 100644
---- a/meson_options.txt
-+++ b/meson_options.txt
-@@ -80,3 +80,4 @@ option('gtk_doc', type: 'boolean', value: false, description: 'use gtk-doc to bu
+diff -Naur modemmanager-1.24.0/meson_options.txt modemmanager-1.24.0-patched/meson_options.txt
+--- modemmanager-1.24.0/meson_options.txt	2025-04-10 04:30:25.000000000 +0300
++++ modemmanager-1.24.0-patched/meson_options.txt	2026-08-16 21:50:49.319940378 +0300
+@@ -80,3 +80,4 @@
  option('bash_completion', type: 'boolean', value: true, description: 'install bash completion files')
  
  option('fuzzer', type: 'boolean', value: false, description: 'build fuzzer tests')
 +option('plugin_fm350gl', type: 'feature', value: 'auto', description: 'enable fm350gl plugin support')
-diff --git a/src/plugins/fm350gl/77-mm-fm350gl.rules b/src/plugins/fm350gl/77-mm-fm350gl.rules
-new file mode 100644
-index 0000000..5fb76e0
---- /dev/null
-+++ b/src/plugins/fm350gl/77-mm-fm350gl.rules
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/77-mm-fm350gl.rules modemmanager-1.24.0-patched/src/plugins/fm350gl/77-mm-fm350gl.rules
+--- modemmanager-1.24.0/src/plugins/fm350gl/77-mm-fm350gl.rules	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/77-mm-fm350gl.rules	2026-08-16 21:50:49.320657578 +0300
 @@ -0,0 +1,41 @@
 +# /lib/udev/rules.d/77-mm-fm350gl.rules 
 +
@@ -66,11 +62,9 @@ index 0000000..5fb76e0
 +  LABEL="mm_fm350gl_port_types_end"
 +
 +
-diff --git a/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c
-new file mode 100755
-index 0000000..8b0d10f
---- /dev/null
-+++ b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c
+--- modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.c	2026-08-16 21:50:49.320840478 +0300
 @@ -0,0 +1,695 @@
 +/*
 + * This program is free software; you can redistribute it and/or modify
@@ -767,11 +761,9 @@ index 0000000..8b0d10f
 +    g_free (command);
 +}
 +
-diff --git a/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h
-new file mode 100755
-index 0000000..faad07c
---- /dev/null
-+++ b/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h
+--- modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-bearer-fm350gl.h	2026-08-16 21:50:49.321294278 +0300
 @@ -0,0 +1,82 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
@@ -855,12 +847,10 @@ index 0000000..faad07c
 +
 +
 +#endif /* MM_BROADBAND_BEARER_FM350GL_H */
-diff --git a/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c b/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c
-new file mode 100755
-index 0000000..afaf40d
---- /dev/null
-+++ b/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c
-@@ -0,0 +1,778 @@
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c
+--- modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c	2026-08-16 21:50:49.366889091 +0300
+@@ -0,0 +1,1274 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * This program is free software; you can redistribute it and/or modify
@@ -1012,7 +1002,7 @@ index 0000000..afaf40d
 +            "Failed to run init command: primary port missing");
 +        return;
 +    }
-+    mm_base_modem_at_command_full(MM_BASE_MODEM(self),  primary, "Z0", 6, FALSE, FALSE, NULL, /* cancellable */ callback, user_data);
++    mm_base_modem_at_command_full(MM_BASE_MODEM(self), MM_IFACE_PORT_AT (primary), "Z0", 6, FALSE, FALSE, NULL, /* cancellable */ callback, user_data);
 +}
 +
 +
@@ -1214,303 +1204,799 @@ index 0000000..afaf40d
 +}
 +
 +
-+static GArray* load_supported_bands_finish(MMIfaceModem* self, GAsyncResult* res, GError** error)
++static gboolean
++fm350gl_parse_hex_u32 (const gchar *str, guint32 *value)
 +{
-+    return g_task_propagate_pointer(G_TASK(res), error);
++    gchar *end = NULL;
++    guint64 tmp;
++
++    tmp = g_ascii_strtoull (str, &end, 16);
++    if (end == str || *end != '\0' || tmp > G_MAXUINT32)
++        return FALSE;
++
++    *value = (guint32) tmp;
++    return TRUE;
 +}
 +
-+
-+static void load_supported_bands_done(MMIfaceModem* self, GAsyncResult* res, GTask* task)
++static gchar *
++fm350gl_clean_epbseh_field (const gchar *field)
 +{
-+    const gchar* response;
-+    GError* error = NULL;
-+    int i, tmp;
-+    GString* stmp;
-+    gchar* umts_band;
-+    gchar* lte_band;
-+    gchar* nr_band;
-+    gchar** umtsbands;
-+    gchar** lteband;
-+    gchar** nrband;
-+    GArray* bands;
-+    gchar** parts;
-+    int c, cumts, clte, cnr;
-+    GString* s;
++    gchar *clean = g_strdup (field);
++    g_strstrip (clean);
 +
-+
-+    response = mm_base_modem_at_command_finish(MM_BASE_MODEM(self), res, &error);
-+    if (!response) {
-+        g_task_return_error(task, error);
-+        g_object_unref(task);
-+        return;
-+    }
-+    
-+    response = mm_strip_tag(response, "+GTACT: ");
-+
-+    s = g_string_new(response);
-+    g_string_replace(s, ")", "", -1);
-+    g_string_replace(s, "(", "|", -1);  
-+    parts = g_strsplit(s->str, "|", -1);
-+    c = g_strv_length(parts);
-+
-+    if (c != 10) {
-+        g_task_return_new_error(  task,  MM_CORE_ERROR,  MM_CORE_ERROR_FAILED, "Failed to parse supported bands response");
-+        g_object_unref(task);
-+        return;
-+    }
-+    
-+    umts_band = parts[5];       
-+    lte_band = parts[6];        
-+    nr_band = parts[9];        
-+ 
-+
-+    umtsbands = g_strsplit(umts_band, ",", -1);
-+    lteband = g_strsplit(lte_band, ",", -1);
-+    nrband = g_strsplit(nr_band, ",", -1);
-+
-+    cumts = g_strv_length(umtsbands)-1;
-+    clte = g_strv_length(lteband)-1;
-+    cnr = g_strv_length(nrband);
-+ 
-+    bands = g_array_new(FALSE, FALSE, sizeof(MMModemBand));
-+
-+    for (i = 0; i < cumts; i++)
-+    {
-+        tmp = atoi(umtsbands[i]);
-+        bands = g_array_append_val(bands, tmp);
-+
-+    }
-+    for (i = 0; i < clte; i++)
-+    {
-+        stmp = g_string_new(lteband[i]);
-+        g_string_erase(stmp, 0, 1);
-+        tmp = atoi(stmp->str)+30;
-+        bands = g_array_append_val(bands, tmp);
-+    }
-+    for (i = 0; i < cnr; i++)
-+    {
-+        stmp = g_string_new(nrband[i]);
-+        g_string_erase(stmp, 0, 1);
-+        tmp = atoi(stmp->str) + 300;
-+        bands = g_array_append_val(bands, tmp);
-+    }
-+
-+    g_task_return_pointer(task, bands, (GDestroyNotify)g_array_unref);
-+    g_object_unref(task);
-+}
-+
-+
-+
-+static void load_supported_bands(MMIfaceModem* self, GAsyncReadyCallback callback, gpointer user_data)
-+{
-+    GTask* task;
-+    task = g_task_new(self, NULL, callback, user_data);
-+
-+    mm_base_modem_at_command(
-+        MM_BASE_MODEM(self),
-+        "+GTACT=?",
-+        3,
-+        FALSE,
-+        (GAsyncReadyCallback)load_supported_bands_done,
-+        task);
-+}
-+
-+
-+
-+static GArray* load_current_bands_finish(MMIfaceModem* self, GAsyncResult* res, GError** error)
-+{
-+    return g_task_propagate_pointer(G_TASK(res), error);
-+}
-+
-+static void load_current_bands_done(MMIfaceModem* self, GAsyncResult* res, GTask* task)
-+{
-+    const gchar* response;
-+    GError* error = NULL;
-+    int c, i, tmp, count;
-+    GArray* bands;
-+    GString* s;
-+    gchar** parts;
-+
-+    response = mm_base_modem_at_command_finish(MM_BASE_MODEM(self), res, &error);
-+    if (!response) {
-+        g_task_return_error(task, error);
-+        g_object_unref(task);
-+        return;
-+    }
-+
-+    response = mm_strip_tag(response, "+GTACT: ");
-+
-+    s = g_string_new(response);
-+    parts = g_strsplit(s->str, ",", -1);
-+    c = g_strv_length(parts);
-+
-+
-+    if (c < 4) {
-+        g_task_return_new_error(task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Failed to parse supported bands response");
-+        g_object_unref(task);
-+        return;
-+    }
-+
-+
-+    count = g_strv_length(parts);
-+
-+    bands = g_array_new(FALSE, FALSE, sizeof(MMModemBand));
-+
-+   
-+
-+
-+    for (i = 3; i < count; i++)
-+    {
-+        tmp = atoi(parts[i]);
-+        if (tmp >= 100 && tmp < 200) { tmp = tmp - 100 + 30; }
-+        if (tmp >= 500 && tmp < 600) { tmp = tmp - 500 + 300; } if (tmp >= 5000 && tmp < 6000) { tmp = tmp - 5000 + 300; }
-+
-+        bands = g_array_append_val(bands, tmp);
-+    }
-+   
-+
-+    g_task_return_pointer(task, bands, (GDestroyNotify)g_array_unref);
-+    g_object_unref(task);
-+}
-+
-+static void load_current_bands(MMIfaceModem* self, GAsyncReadyCallback callback, gpointer user_data)
-+{  
-+    GTask* task;
-+
-+    task = g_task_new(self, NULL, callback, user_data);
-+
-+    mm_base_modem_at_command(
-+        MM_BASE_MODEM(self),
-+        "+GTACT?",
-+        3,
-+        FALSE,
-+        (GAsyncReadyCallback)load_current_bands_done,
-+        task);  
-+}
-+
-+
-+
-+static gboolean set_current_bands_finish(MMIfaceModem* self, GAsyncResult* res, GError** error)
-+{
-+    return g_task_propagate_boolean(G_TASK(res), error);
-+}
-+
-+
-+static void set_current_bands_set_finish(MMBaseModem* self, GAsyncResult* res, GTask* task)
-+{
-+    const gchar* response;
-+    GError* error = NULL;
-+    response = mm_base_modem_at_command_finish(MM_BASE_MODEM(self), res, &error);
-+    if (!response) {
-+        g_task_return_error(task, error);
-+        g_object_unref(task);
-+        return;
-+    }
-+    g_task_return_boolean(task, TRUE);
-+    g_object_unref(task);
-+}
-+
-+static void set_current_bands_get_current_rats(MMBaseModem* self, GAsyncResult* res, GTask* task)
-+{
-+    GString* s;
-+
-+    GArray* ctx;
-+    gchar** parts;
-+    int c,i,j,b;
-+    GString* newcommand;
-+
-+    const gchar* response;
-+    GError* error = NULL;
-+
-+    ctx = g_task_get_task_data(task);
-+    response = mm_base_modem_at_command_finish(MM_BASE_MODEM(self), res, &error);
-+    if (!response) {
-+        g_task_return_error(task, error);
-+        g_object_unref(task);
-+        return;
-+    }
-+
-+    response = mm_strip_tag(response, "+GTACT: ");
-+    s = g_string_new(response);
-+    parts = g_strsplit(s->str, ",", -1);
-+    c = g_strv_length(parts);
-+    if (c < 3)
-+    {
-+        g_task_return_new_error(task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Failed to parse Rats response");
-+        g_object_unref(task);
-+        return;
-+    }
-+
-+    newcommand = g_string_new("AT+GTACT=");
-+    g_string_append(newcommand, parts[0]);
-+    g_string_append(newcommand, ",");
-+    g_string_append(newcommand, parts[1]);
-+    g_string_append(newcommand, ",");
-+    g_string_append(newcommand, parts[2]);
-+
-+
-+
-+    j = ctx->len;
-+
-+    for (i=0;i<j;i++)
-+    {
-+        b = g_array_index(ctx, MMModemBand, i);
-+        if (b > 0 && b < 30)
-+        {
-+            g_string_append(newcommand, ",");
-+            g_string_append(newcommand, g_strdup_printf("%i", b));          
-+            continue;
++    if (clean[0] == '"') {
++        gsize len = strlen (clean);
++        if (len >= 2 && clean[len - 1] == '"') {
++            clean[len - 1] = '\0';
++            memmove (clean, clean + 1, len - 1);
 +        }
-+        if (b > 30 && b < 300)
-+        {
-+            b = b - 30 + 100;
-+            g_string_append(newcommand, ",");
-+            g_string_append(newcommand, g_strdup_printf("%i", b));
-+            continue;
-+        }
-+        if (b > 30 && b < 599)
-+        {
-+            b = b - 300; if ( b>0 && b <10 ) {b=b + 500;} else {b=b + 5000;}
-+            g_string_append(newcommand, ",");
-+            g_string_append(newcommand, g_strdup_printf("%i", b));
-+            continue;
++    }
++
++    return clean;
++}
++
++static gboolean
++fm350gl_parse_hex_bitmap (const gchar *str,
++                           guint32      value[4])
++{
++    gsize len;
++    gsize offset;
++    guint i;
++
++    memset (value, 0, sizeof (guint32) * 4);
++
++    len = strlen (str);
++    if (len == 0 || len > 32)
++        return FALSE;
++
++    offset = 0;
++    for (i = 0; i < 4 && offset < len; i++) {
++        gchar chunk[9];
++        gsize chunk_len = MIN ((gsize) 8, len - offset);
++        gchar *end = NULL;
++        guint64 tmp;
++
++        memcpy (chunk, str + offset, chunk_len);
++        chunk[chunk_len] = '\0';
++
++        tmp = g_ascii_strtoull (chunk, &end, 16);
++        if (end == chunk || *end != '\0' || tmp > G_MAXUINT32)
++            return FALSE;
++
++        value[i] = (guint32) tmp;
++        offset += chunk_len;
++    }
++
++    return TRUE;
++}
++
++static gboolean
++fm350gl_parse_epbseh (const gchar *response,
++                      gchar      **gsm,
++                      guint32     *umts,
++                      guint32      lte[4],
++                      guint32      nr[4],
++                      GError     **error)
++{
++    gchar **parts;
++    gchar *fields[4] = { NULL };
++    guint i;
++
++    response = mm_strip_tag (response, "+EPBSEH: ");
++    parts = g_strsplit (response, ",", -1);
++
++    if (g_strv_length (parts) != 4) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Failed to parse +EPBSEH response");
++        g_strfreev (parts);
++        return FALSE;
++    }
++
++    for (i = 0; i < 4; i++)
++        fields[i] = fm350gl_clean_epbseh_field (parts[i]);
++
++    if (gsm)
++        *gsm = g_strdup (fields[0]);
++
++    if (!fm350gl_parse_hex_u32 (fields[1], umts)) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Failed to parse +EPBSEH UMTS bitmap");
++        goto out;
++    }
++
++    if (!fm350gl_parse_hex_bitmap (fields[2], lte)) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Failed to parse +EPBSEH LTE bitmap");
++        goto out;
++    }
++
++    if (!fm350gl_parse_hex_bitmap (fields[3], nr)) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Failed to parse +EPBSEH NR bitmap");
++        goto out;
++    }
++
++    for (i = 0; i < 4; i++)
++        g_free (fields[i]);
++    g_strfreev (parts);
++    return TRUE;
++
++out:
++    if (gsm) {
++        g_clear_pointer (gsm, g_free);
++    }
++    for (i = 0; i < 4; i++)
++        g_free (fields[i]);
++    g_strfreev (parts);
++    return FALSE;
++}
++
++typedef enum {
++    FM350GL_BAND_TYPE_NONE,
++    FM350GL_BAND_TYPE_UTRAN,
++    FM350GL_BAND_TYPE_EUTRAN,
++    FM350GL_BAND_TYPE_NGRAN,
++} FM350GLBandType;
++
++static MMModemBand
++fm350gl_band_from_number (FM350GLBandType type,
++                          guint            number)
++{
++    switch (type) {
++    case FM350GL_BAND_TYPE_UTRAN:
++        switch (number) {
++        case 1:  return MM_MODEM_BAND_UTRAN_1;
++        case 2:  return MM_MODEM_BAND_UTRAN_2;
++        case 3:  return MM_MODEM_BAND_UTRAN_3;
++        case 4:  return MM_MODEM_BAND_UTRAN_4;
++        case 5:  return MM_MODEM_BAND_UTRAN_5;
++        case 6:  return MM_MODEM_BAND_UTRAN_6;
++        case 7:  return MM_MODEM_BAND_UTRAN_7;
++        case 8:  return MM_MODEM_BAND_UTRAN_8;
++        case 9:  return MM_MODEM_BAND_UTRAN_9;
++        case 10: return MM_MODEM_BAND_UTRAN_10;
++        case 11: return MM_MODEM_BAND_UTRAN_11;
++        case 12: return MM_MODEM_BAND_UTRAN_12;
++        case 13: return MM_MODEM_BAND_UTRAN_13;
++        case 14: return MM_MODEM_BAND_UTRAN_14;
++        case 19: return MM_MODEM_BAND_UTRAN_19;
++        case 20: return MM_MODEM_BAND_UTRAN_20;
++        case 21: return MM_MODEM_BAND_UTRAN_21;
++        case 22: return MM_MODEM_BAND_UTRAN_22;
++        case 25: return MM_MODEM_BAND_UTRAN_25;
++        case 26: return MM_MODEM_BAND_UTRAN_26;
++        case 32: return MM_MODEM_BAND_UTRAN_32;
++        default: return MM_MODEM_BAND_UNKNOWN;
 +        }
 +
++    case FM350GL_BAND_TYPE_EUTRAN:
++        if (number >= 1 && number <= 14)
++            return MM_MODEM_BAND_EUTRAN_1 + (number - 1);
++        if (number >= 17 && number <= 64)
++            return MM_MODEM_BAND_EUTRAN_17 + (number - 17);
++        return MM_MODEM_BAND_UNKNOWN;
++
++    case FM350GL_BAND_TYPE_NGRAN:
++        switch (number) {
++        case 1:  return MM_MODEM_BAND_NGRAN_1;
++        case 2:  return MM_MODEM_BAND_NGRAN_2;
++        case 3:  return MM_MODEM_BAND_NGRAN_3;
++        case 5:  return MM_MODEM_BAND_NGRAN_5;
++        case 7:  return MM_MODEM_BAND_NGRAN_7;
++        case 8:  return MM_MODEM_BAND_NGRAN_8;
++        case 12: return MM_MODEM_BAND_NGRAN_12;
++        case 13: return MM_MODEM_BAND_NGRAN_13;
++        case 14: return MM_MODEM_BAND_NGRAN_14;
++        case 18: return MM_MODEM_BAND_NGRAN_18;
++        case 20: return MM_MODEM_BAND_NGRAN_20;
++        case 25: return MM_MODEM_BAND_NGRAN_25;
++        case 26: return MM_MODEM_BAND_NGRAN_26;
++        case 28: return MM_MODEM_BAND_NGRAN_28;
++        case 29: return MM_MODEM_BAND_NGRAN_29;
++        case 30: return MM_MODEM_BAND_NGRAN_30;
++        case 34: return MM_MODEM_BAND_NGRAN_34;
++        case 38: return MM_MODEM_BAND_NGRAN_38;
++        case 39: return MM_MODEM_BAND_NGRAN_39;
++        case 40: return MM_MODEM_BAND_NGRAN_40;
++        case 41: return MM_MODEM_BAND_NGRAN_41;
++        case 48: return MM_MODEM_BAND_NGRAN_48;
++        case 50: return MM_MODEM_BAND_NGRAN_50;
++        case 51: return MM_MODEM_BAND_NGRAN_51;
++        case 53: return MM_MODEM_BAND_NGRAN_53;
++        case 65: return MM_MODEM_BAND_NGRAN_65;
++        case 66: return MM_MODEM_BAND_NGRAN_66;
++        case 67: return MM_MODEM_BAND_NGRAN_67;
++        case 70: return MM_MODEM_BAND_NGRAN_70;
++        case 71: return MM_MODEM_BAND_NGRAN_71;
++        case 74: return MM_MODEM_BAND_NGRAN_74;
++        case 75: return MM_MODEM_BAND_NGRAN_75;
++        case 76: return MM_MODEM_BAND_NGRAN_76;
++        case 77: return MM_MODEM_BAND_NGRAN_77;
++        case 78: return MM_MODEM_BAND_NGRAN_78;
++        case 79: return MM_MODEM_BAND_NGRAN_79;
++        case 80: return MM_MODEM_BAND_NGRAN_80;
++        case 81: return MM_MODEM_BAND_NGRAN_81;
++        case 82: return MM_MODEM_BAND_NGRAN_82;
++        case 83: return MM_MODEM_BAND_NGRAN_83;
++        case 84: return MM_MODEM_BAND_NGRAN_84;
++        case 86: return MM_MODEM_BAND_NGRAN_86;
++        case 89: return MM_MODEM_BAND_NGRAN_89;
++        case 90: return MM_MODEM_BAND_NGRAN_90;
++        case 91: return MM_MODEM_BAND_NGRAN_91;
++        case 92: return MM_MODEM_BAND_NGRAN_92;
++        case 93: return MM_MODEM_BAND_NGRAN_93;
++        case 94: return MM_MODEM_BAND_NGRAN_94;
++        case 95: return MM_MODEM_BAND_NGRAN_95;
++        default: return MM_MODEM_BAND_UNKNOWN;
++        }
++
++    default:
++        return MM_MODEM_BAND_UNKNOWN;
++    }
++}
++
++static void
++fm350gl_append_bitmap_bands (GArray          *bands,
++                             guint32          mask,
++                             guint             first_band,
++                             FM350GLBandType  type)
++{
++    guint i;
++
++    for (i = 0; i < 32; i++) {
++        MMModemBand band;
++
++        if (!(mask & (1U << i)))
++            continue;
++
++        band = fm350gl_band_from_number (type, first_band + i);
++        if (band != MM_MODEM_BAND_UNKNOWN)
++            g_array_append_val (bands, band);
++    }
++}
++
++static GArray *
++fm350gl_epbseh_response_to_bands (const gchar *response,
++                                  GError     **error)
++{
++    gchar *gsm = NULL;
++    guint32 umts;
++    guint32 lte[4];
++    guint32 nr[4];
++    GArray *bands;
++
++    if (!fm350gl_parse_epbseh (response, &gsm, &umts, lte, nr, error))
++        return NULL;
++
++    g_free (gsm);
++    bands = g_array_new (FALSE, FALSE, sizeof (MMModemBand));
++
++    fm350gl_append_bitmap_bands (bands, umts, 1, FM350GL_BAND_TYPE_UTRAN);
++    fm350gl_append_bitmap_bands (bands, lte[0], 1, FM350GL_BAND_TYPE_EUTRAN);
++    fm350gl_append_bitmap_bands (bands, lte[1], 33, FM350GL_BAND_TYPE_EUTRAN);
++    fm350gl_append_bitmap_bands (bands, nr[0], 1, FM350GL_BAND_TYPE_NGRAN);
++    fm350gl_append_bitmap_bands (bands, nr[1], 33, FM350GL_BAND_TYPE_NGRAN);
++    fm350gl_append_bitmap_bands (bands, nr[2], 65, FM350GL_BAND_TYPE_NGRAN);
++    fm350gl_append_bitmap_bands (bands, nr[3], 97, FM350GL_BAND_TYPE_NGRAN);
++
++    return bands;
++}
++
++static GArray *
++load_supported_bands_finish (MMIfaceModem *self,
++                             GAsyncResult *res,
++                             GError **error)
++{
++    return g_task_propagate_pointer (G_TASK (res), error);
++}
++
++static void
++load_supported_bands_done (MMIfaceModem *self,
++                           GAsyncResult *res,
++                           GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    GArray *bands;
++
++    response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
++    if (!response) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
 +    }
 +
-+    mm_base_modem_at_command(MM_BASE_MODEM(self),
-+        newcommand->str,
-+        3,
-+        TRUE, 
-+        (GAsyncReadyCallback)set_current_bands_set_finish,
-+        task);
++    bands = fm350gl_epbseh_response_to_bands (response, &error);
++    if (!bands) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
 +
-+    return;
++    g_task_return_pointer (task, bands, (GDestroyNotify) g_array_unref);
++    g_object_unref (task);
 +}
 +
-+
-+
-+static void set_current_bands_context_free(GArray* ctx)
++static void
++load_supported_bands (MMIfaceModem *self,
++                      GAsyncReadyCallback callback,
++                      gpointer user_data)
 +{
++    GTask *task;
 +
++    task = g_task_new (self, NULL, callback, user_data);
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                              "+EPBSEH=?",
++                              3,
++                              FALSE,
++                              (GAsyncReadyCallback) load_supported_bands_done,
++                              task);
 +}
 +
-+static void set_current_bands(MMIfaceModem* self, GArray* bands_array, GAsyncReadyCallback  callback, gpointer user_data)
++static GArray *
++load_current_bands_finish (MMIfaceModem *self,
++                           GAsyncResult *res,
++                           GError **error)
 +{
-+    GTask* task;
-+    task = g_task_new(self, NULL, callback, user_data);
-+
-+    g_task_set_task_data(task, bands_array, (GDestroyNotify)set_current_bands_context_free);
-+
-+    mm_base_modem_at_command(MM_BASE_MODEM(self),
-+        "AT+GTACT?",
-+        3,
-+        TRUE, 
-+        (GAsyncReadyCallback)set_current_bands_get_current_rats,
-+        task);
++    return g_task_propagate_pointer (G_TASK (res), error);
 +}
 +
++static void
++load_current_bands_done (MMIfaceModem *self,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    GArray *bands;
 +
++    response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
++    if (!response) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    bands = fm350gl_epbseh_response_to_bands (response, &error);
++    if (!bands) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    g_task_return_pointer (task, bands, (GDestroyNotify) g_array_unref);
++    g_object_unref (task);
++}
++
++static void
++load_current_bands (MMIfaceModem *self,
++                    GAsyncReadyCallback callback,
++                    gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                              "+EPBSEH?",
++                              3,
++                              FALSE,
++                              (GAsyncReadyCallback) load_current_bands_done,
++                              task);
++}
++
++static gboolean
++set_current_bands_finish (MMIfaceModem *self,
++                          GAsyncResult *res,
++                          GError **error)
++{
++    return g_task_propagate_boolean (G_TASK (res), error);
++}
++
++static void
++set_current_bands_set_finish (MMBaseModem *self,
++                              GAsyncResult *res,
++                              GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++
++    response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
++    if (!response) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static guint
++fm350gl_band_number (MMModemBand band)
++{
++    switch (band) {
++    case MM_MODEM_BAND_UTRAN_1:  return 1;
++    case MM_MODEM_BAND_UTRAN_2:  return 2;
++    case MM_MODEM_BAND_UTRAN_3:  return 3;
++    case MM_MODEM_BAND_UTRAN_4:  return 4;
++    case MM_MODEM_BAND_UTRAN_5:  return 5;
++    case MM_MODEM_BAND_UTRAN_6:  return 6;
++    case MM_MODEM_BAND_UTRAN_7:  return 7;
++    case MM_MODEM_BAND_UTRAN_8:  return 8;
++    case MM_MODEM_BAND_UTRAN_9:  return 9;
++    case MM_MODEM_BAND_UTRAN_10: return 10;
++    case MM_MODEM_BAND_UTRAN_11: return 11;
++    case MM_MODEM_BAND_UTRAN_12: return 12;
++    case MM_MODEM_BAND_UTRAN_13: return 13;
++    case MM_MODEM_BAND_UTRAN_14: return 14;
++    case MM_MODEM_BAND_UTRAN_19: return 19;
++    case MM_MODEM_BAND_UTRAN_20: return 20;
++    case MM_MODEM_BAND_UTRAN_21: return 21;
++    case MM_MODEM_BAND_UTRAN_22: return 22;
++    case MM_MODEM_BAND_UTRAN_25: return 25;
++    case MM_MODEM_BAND_UTRAN_26: return 26;
++    case MM_MODEM_BAND_UTRAN_32: return 32;
++
++    case MM_MODEM_BAND_EUTRAN_1:  return 1;
++    case MM_MODEM_BAND_EUTRAN_2:  return 2;
++    case MM_MODEM_BAND_EUTRAN_3:  return 3;
++    case MM_MODEM_BAND_EUTRAN_4:  return 4;
++    case MM_MODEM_BAND_EUTRAN_5:  return 5;
++    case MM_MODEM_BAND_EUTRAN_6:  return 6;
++    case MM_MODEM_BAND_EUTRAN_7:  return 7;
++    case MM_MODEM_BAND_EUTRAN_8:  return 8;
++    case MM_MODEM_BAND_EUTRAN_9:  return 9;
++    case MM_MODEM_BAND_EUTRAN_10: return 10;
++    case MM_MODEM_BAND_EUTRAN_11: return 11;
++    case MM_MODEM_BAND_EUTRAN_12: return 12;
++    case MM_MODEM_BAND_EUTRAN_13: return 13;
++    case MM_MODEM_BAND_EUTRAN_14: return 14;
++    case MM_MODEM_BAND_EUTRAN_17: return 17;
++    case MM_MODEM_BAND_EUTRAN_18: return 18;
++    case MM_MODEM_BAND_EUTRAN_19: return 19;
++    case MM_MODEM_BAND_EUTRAN_20: return 20;
++    case MM_MODEM_BAND_EUTRAN_21: return 21;
++    case MM_MODEM_BAND_EUTRAN_22: return 22;
++    case MM_MODEM_BAND_EUTRAN_23: return 23;
++    case MM_MODEM_BAND_EUTRAN_24: return 24;
++    case MM_MODEM_BAND_EUTRAN_25: return 25;
++    case MM_MODEM_BAND_EUTRAN_26: return 26;
++    case MM_MODEM_BAND_EUTRAN_27: return 27;
++    case MM_MODEM_BAND_EUTRAN_28: return 28;
++    case MM_MODEM_BAND_EUTRAN_29: return 29;
++    case MM_MODEM_BAND_EUTRAN_30: return 30;
++    case MM_MODEM_BAND_EUTRAN_31: return 31;
++    case MM_MODEM_BAND_EUTRAN_32: return 32;
++    case MM_MODEM_BAND_EUTRAN_33: return 33;
++    case MM_MODEM_BAND_EUTRAN_34: return 34;
++    case MM_MODEM_BAND_EUTRAN_35: return 35;
++    case MM_MODEM_BAND_EUTRAN_36: return 36;
++    case MM_MODEM_BAND_EUTRAN_37: return 37;
++    case MM_MODEM_BAND_EUTRAN_38: return 38;
++    case MM_MODEM_BAND_EUTRAN_39: return 39;
++    case MM_MODEM_BAND_EUTRAN_40: return 40;
++    case MM_MODEM_BAND_EUTRAN_41: return 41;
++    case MM_MODEM_BAND_EUTRAN_42: return 42;
++    case MM_MODEM_BAND_EUTRAN_43: return 43;
++    case MM_MODEM_BAND_EUTRAN_44: return 44;
++    case MM_MODEM_BAND_EUTRAN_45: return 45;
++    case MM_MODEM_BAND_EUTRAN_46: return 46;
++    case MM_MODEM_BAND_EUTRAN_47: return 47;
++    case MM_MODEM_BAND_EUTRAN_48: return 48;
++    case MM_MODEM_BAND_EUTRAN_49: return 49;
++    case MM_MODEM_BAND_EUTRAN_50: return 50;
++    case MM_MODEM_BAND_EUTRAN_51: return 51;
++    case MM_MODEM_BAND_EUTRAN_52: return 52;
++    case MM_MODEM_BAND_EUTRAN_53: return 53;
++    case MM_MODEM_BAND_EUTRAN_54: return 54;
++    case MM_MODEM_BAND_EUTRAN_55: return 55;
++    case MM_MODEM_BAND_EUTRAN_56: return 56;
++    case MM_MODEM_BAND_EUTRAN_57: return 57;
++    case MM_MODEM_BAND_EUTRAN_58: return 58;
++    case MM_MODEM_BAND_EUTRAN_59: return 59;
++    case MM_MODEM_BAND_EUTRAN_60: return 60;
++    case MM_MODEM_BAND_EUTRAN_61: return 61;
++    case MM_MODEM_BAND_EUTRAN_62: return 62;
++    case MM_MODEM_BAND_EUTRAN_63: return 63;
++    case MM_MODEM_BAND_EUTRAN_64: return 64;
++
++    case MM_MODEM_BAND_NGRAN_1:  return 1;
++    case MM_MODEM_BAND_NGRAN_2:  return 2;
++    case MM_MODEM_BAND_NGRAN_3:  return 3;
++    case MM_MODEM_BAND_NGRAN_5:  return 5;
++    case MM_MODEM_BAND_NGRAN_7:  return 7;
++    case MM_MODEM_BAND_NGRAN_8:  return 8;
++    case MM_MODEM_BAND_NGRAN_12: return 12;
++    case MM_MODEM_BAND_NGRAN_13: return 13;
++    case MM_MODEM_BAND_NGRAN_14: return 14;
++    case MM_MODEM_BAND_NGRAN_18: return 18;
++    case MM_MODEM_BAND_NGRAN_20: return 20;
++    case MM_MODEM_BAND_NGRAN_25: return 25;
++    case MM_MODEM_BAND_NGRAN_26: return 26;
++    case MM_MODEM_BAND_NGRAN_28: return 28;
++    case MM_MODEM_BAND_NGRAN_29: return 29;
++    case MM_MODEM_BAND_NGRAN_30: return 30;
++    case MM_MODEM_BAND_NGRAN_34: return 34;
++    case MM_MODEM_BAND_NGRAN_38: return 38;
++    case MM_MODEM_BAND_NGRAN_39: return 39;
++    case MM_MODEM_BAND_NGRAN_40: return 40;
++    case MM_MODEM_BAND_NGRAN_41: return 41;
++    case MM_MODEM_BAND_NGRAN_48: return 48;
++    case MM_MODEM_BAND_NGRAN_50: return 50;
++    case MM_MODEM_BAND_NGRAN_51: return 51;
++    case MM_MODEM_BAND_NGRAN_53: return 53;
++    case MM_MODEM_BAND_NGRAN_65: return 65;
++    case MM_MODEM_BAND_NGRAN_66: return 66;
++    case MM_MODEM_BAND_NGRAN_67: return 67;
++    case MM_MODEM_BAND_NGRAN_70: return 70;
++    case MM_MODEM_BAND_NGRAN_71: return 71;
++    case MM_MODEM_BAND_NGRAN_74: return 74;
++    case MM_MODEM_BAND_NGRAN_75: return 75;
++    case MM_MODEM_BAND_NGRAN_76: return 76;
++    case MM_MODEM_BAND_NGRAN_77: return 77;
++    case MM_MODEM_BAND_NGRAN_78: return 78;
++    case MM_MODEM_BAND_NGRAN_79: return 79;
++    case MM_MODEM_BAND_NGRAN_80: return 80;
++    case MM_MODEM_BAND_NGRAN_81: return 81;
++    case MM_MODEM_BAND_NGRAN_82: return 82;
++    case MM_MODEM_BAND_NGRAN_83: return 83;
++    case MM_MODEM_BAND_NGRAN_84: return 84;
++    case MM_MODEM_BAND_NGRAN_86: return 86;
++    case MM_MODEM_BAND_NGRAN_89: return 89;
++    case MM_MODEM_BAND_NGRAN_90: return 90;
++    case MM_MODEM_BAND_NGRAN_91: return 91;
++    case MM_MODEM_BAND_NGRAN_92: return 92;
++    case MM_MODEM_BAND_NGRAN_93: return 93;
++    case MM_MODEM_BAND_NGRAN_94: return 94;
++    case MM_MODEM_BAND_NGRAN_95: return 95;
++    default:
++        return 0;
++    }
++}
++
++typedef struct {
++    GArray *bands;
++} SetCurrentBandsContext;
++
++static void
++set_current_bands_context_free (SetCurrentBandsContext *ctx)
++{
++    g_clear_pointer (&ctx->bands, g_array_unref);
++    g_free (ctx);
++}
++
++static void
++set_current_bands_get_current (MMBaseModem *self,
++                               GAsyncResult *res,
++                               GTask *task)
++{
++    SetCurrentBandsContext *ctx;
++    const gchar *response;
++    GError *error = NULL;
++    gchar *gsm = NULL;
++    guint32 umts = 0;
++    guint32 lte[4] = { 0, 0, 0, 0 };
++    guint32 nr[4] = { 0, 0, 0, 0 };
++    guint i;
++    GString *command;
++
++    ctx = g_task_get_task_data (task);
++    response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, &error);
++    if (!response) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    if (!fm350gl_parse_epbseh (response, &gsm, &umts, lte, nr, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    umts = 0;
++    lte[0] = lte[1] = 0;
++    nr[0] = nr[1] = nr[2] = nr[3] = 0;
++
++    for (i = 0; i < ctx->bands->len; i++) {
++        MMModemBand band = g_array_index (ctx->bands, MMModemBand, i);
++        guint number = fm350gl_band_number (band);
++
++        if (!number)
++            continue;
++
++        switch (band) {
++        case MM_MODEM_BAND_UTRAN_1:
++        case MM_MODEM_BAND_UTRAN_2:
++        case MM_MODEM_BAND_UTRAN_3:
++        case MM_MODEM_BAND_UTRAN_4:
++        case MM_MODEM_BAND_UTRAN_5:
++        case MM_MODEM_BAND_UTRAN_6:
++        case MM_MODEM_BAND_UTRAN_7:
++        case MM_MODEM_BAND_UTRAN_8:
++        case MM_MODEM_BAND_UTRAN_9:
++        case MM_MODEM_BAND_UTRAN_10:
++        case MM_MODEM_BAND_UTRAN_11:
++        case MM_MODEM_BAND_UTRAN_12:
++        case MM_MODEM_BAND_UTRAN_13:
++        case MM_MODEM_BAND_UTRAN_14:
++        case MM_MODEM_BAND_UTRAN_19:
++        case MM_MODEM_BAND_UTRAN_20:
++        case MM_MODEM_BAND_UTRAN_21:
++        case MM_MODEM_BAND_UTRAN_22:
++        case MM_MODEM_BAND_UTRAN_25:
++        case MM_MODEM_BAND_UTRAN_26:
++        case MM_MODEM_BAND_UTRAN_32:
++            umts |= 1U << (number - 1);
++            break;
++
++        case MM_MODEM_BAND_EUTRAN_1:
++        case MM_MODEM_BAND_EUTRAN_2:
++        case MM_MODEM_BAND_EUTRAN_3:
++        case MM_MODEM_BAND_EUTRAN_4:
++        case MM_MODEM_BAND_EUTRAN_5:
++        case MM_MODEM_BAND_EUTRAN_6:
++        case MM_MODEM_BAND_EUTRAN_7:
++        case MM_MODEM_BAND_EUTRAN_8:
++        case MM_MODEM_BAND_EUTRAN_9:
++        case MM_MODEM_BAND_EUTRAN_10:
++        case MM_MODEM_BAND_EUTRAN_11:
++        case MM_MODEM_BAND_EUTRAN_12:
++        case MM_MODEM_BAND_EUTRAN_13:
++        case MM_MODEM_BAND_EUTRAN_14:
++        case MM_MODEM_BAND_EUTRAN_17:
++        case MM_MODEM_BAND_EUTRAN_18:
++        case MM_MODEM_BAND_EUTRAN_19:
++        case MM_MODEM_BAND_EUTRAN_20:
++        case MM_MODEM_BAND_EUTRAN_21:
++        case MM_MODEM_BAND_EUTRAN_22:
++        case MM_MODEM_BAND_EUTRAN_23:
++        case MM_MODEM_BAND_EUTRAN_24:
++        case MM_MODEM_BAND_EUTRAN_25:
++        case MM_MODEM_BAND_EUTRAN_26:
++        case MM_MODEM_BAND_EUTRAN_27:
++        case MM_MODEM_BAND_EUTRAN_28:
++        case MM_MODEM_BAND_EUTRAN_29:
++        case MM_MODEM_BAND_EUTRAN_30:
++        case MM_MODEM_BAND_EUTRAN_31:
++        case MM_MODEM_BAND_EUTRAN_32:
++        case MM_MODEM_BAND_EUTRAN_33:
++        case MM_MODEM_BAND_EUTRAN_34:
++        case MM_MODEM_BAND_EUTRAN_35:
++        case MM_MODEM_BAND_EUTRAN_36:
++        case MM_MODEM_BAND_EUTRAN_37:
++        case MM_MODEM_BAND_EUTRAN_38:
++        case MM_MODEM_BAND_EUTRAN_39:
++        case MM_MODEM_BAND_EUTRAN_40:
++        case MM_MODEM_BAND_EUTRAN_41:
++        case MM_MODEM_BAND_EUTRAN_42:
++        case MM_MODEM_BAND_EUTRAN_43:
++        case MM_MODEM_BAND_EUTRAN_44:
++        case MM_MODEM_BAND_EUTRAN_45:
++        case MM_MODEM_BAND_EUTRAN_46:
++        case MM_MODEM_BAND_EUTRAN_47:
++        case MM_MODEM_BAND_EUTRAN_48:
++        case MM_MODEM_BAND_EUTRAN_49:
++        case MM_MODEM_BAND_EUTRAN_50:
++        case MM_MODEM_BAND_EUTRAN_51:
++        case MM_MODEM_BAND_EUTRAN_52:
++        case MM_MODEM_BAND_EUTRAN_53:
++        case MM_MODEM_BAND_EUTRAN_54:
++        case MM_MODEM_BAND_EUTRAN_55:
++        case MM_MODEM_BAND_EUTRAN_56:
++        case MM_MODEM_BAND_EUTRAN_57:
++        case MM_MODEM_BAND_EUTRAN_58:
++        case MM_MODEM_BAND_EUTRAN_59:
++        case MM_MODEM_BAND_EUTRAN_60:
++        case MM_MODEM_BAND_EUTRAN_61:
++        case MM_MODEM_BAND_EUTRAN_62:
++        case MM_MODEM_BAND_EUTRAN_63:
++        case MM_MODEM_BAND_EUTRAN_64: {
++            guint index = number - 1;
++            lte[index / 32] |= 1U << (index % 32);
++            break;
++        }
++
++        case MM_MODEM_BAND_NGRAN_1:
++        case MM_MODEM_BAND_NGRAN_2:
++        case MM_MODEM_BAND_NGRAN_3:
++        case MM_MODEM_BAND_NGRAN_5:
++        case MM_MODEM_BAND_NGRAN_7:
++        case MM_MODEM_BAND_NGRAN_8:
++        case MM_MODEM_BAND_NGRAN_12:
++        case MM_MODEM_BAND_NGRAN_13:
++        case MM_MODEM_BAND_NGRAN_14:
++        case MM_MODEM_BAND_NGRAN_18:
++        case MM_MODEM_BAND_NGRAN_20:
++        case MM_MODEM_BAND_NGRAN_25:
++        case MM_MODEM_BAND_NGRAN_26:
++        case MM_MODEM_BAND_NGRAN_28:
++        case MM_MODEM_BAND_NGRAN_29:
++        case MM_MODEM_BAND_NGRAN_30:
++        case MM_MODEM_BAND_NGRAN_34:
++        case MM_MODEM_BAND_NGRAN_38:
++        case MM_MODEM_BAND_NGRAN_39:
++        case MM_MODEM_BAND_NGRAN_40:
++        case MM_MODEM_BAND_NGRAN_41:
++        case MM_MODEM_BAND_NGRAN_48:
++        case MM_MODEM_BAND_NGRAN_50:
++        case MM_MODEM_BAND_NGRAN_51:
++        case MM_MODEM_BAND_NGRAN_53:
++        case MM_MODEM_BAND_NGRAN_65:
++        case MM_MODEM_BAND_NGRAN_66:
++        case MM_MODEM_BAND_NGRAN_67:
++        case MM_MODEM_BAND_NGRAN_70:
++        case MM_MODEM_BAND_NGRAN_71:
++        case MM_MODEM_BAND_NGRAN_74:
++        case MM_MODEM_BAND_NGRAN_75:
++        case MM_MODEM_BAND_NGRAN_76:
++        case MM_MODEM_BAND_NGRAN_77:
++        case MM_MODEM_BAND_NGRAN_78:
++        case MM_MODEM_BAND_NGRAN_79:
++        case MM_MODEM_BAND_NGRAN_80:
++        case MM_MODEM_BAND_NGRAN_81:
++        case MM_MODEM_BAND_NGRAN_82:
++        case MM_MODEM_BAND_NGRAN_83:
++        case MM_MODEM_BAND_NGRAN_84:
++        case MM_MODEM_BAND_NGRAN_86:
++        case MM_MODEM_BAND_NGRAN_89:
++        case MM_MODEM_BAND_NGRAN_90:
++        case MM_MODEM_BAND_NGRAN_91:
++        case MM_MODEM_BAND_NGRAN_92:
++        case MM_MODEM_BAND_NGRAN_93:
++        case MM_MODEM_BAND_NGRAN_94:
++        case MM_MODEM_BAND_NGRAN_95: {
++            guint index = number - 1;
++            nr[index / 32] |= 1U << (index % 32);
++            break;
++        }
++
++        default:
++            break;
++        }
++    }
++
++    command = g_string_new ("AT+EPBSEH=\"");
++    g_string_append (command, gsm);
++    g_string_append (command, "\",");
++    g_string_append_printf (command, "\"%08X\",", umts);
++    g_string_append_printf (command, "\"%08X%08X%08X%08X\",", lte[0], lte[1], lte[2], lte[3]);
++    g_string_append_printf (command, "\"%08X%08X%08X%08X\"", nr[0], nr[1], nr[2], nr[3]);
++
++    g_free (gsm);
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                              command->str,
++                              3,
++                              TRUE,
++                              (GAsyncReadyCallback) set_current_bands_set_finish,
++                              task);
++    g_string_free (command, TRUE);
++}
++
++static void
++set_current_bands (MMIfaceModem *self,
++                   GArray *bands_array,
++                   GAsyncReadyCallback callback,
++                   gpointer user_data)
++{
++    GTask *task;
++    SetCurrentBandsContext *ctx;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    ctx = g_new0 (SetCurrentBandsContext, 1);
++    ctx->bands = g_array_ref (bands_array);
++    g_task_set_task_data (task, ctx, (GDestroyNotify) set_current_bands_context_free);
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                              "+EPBSEH?",
++                              3,
++                              TRUE,
++                              (GAsyncReadyCallback) set_current_bands_get_current,
++                              task);
++}
 +
 +
 +static MMBaseBearer *
@@ -1639,11 +2125,9 @@ index 0000000..afaf40d
 +}
 +
 +
-diff --git a/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h b/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h
-new file mode 100755
-index 0000000..dbcf596
---- /dev/null
-+++ b/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h
+--- modemmanager-1.24.0/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-broadband-modem-fm350gl.h	2026-08-16 21:50:49.322195378 +0300
 @@ -0,0 +1,51 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
@@ -1696,11 +2180,9 @@ index 0000000..dbcf596
 +                                                       guint16 product_id);
 +
 +#endif /* MM_BROADBAND_MODEM_FM350GL_H */
-diff --git a/src/plugins/fm350gl/mm-plugin-fm350gl.c b/src/plugins/fm350gl/mm-plugin-fm350gl.c
-new file mode 100755
-index 0000000..24cf725
---- /dev/null
-+++ b/src/plugins/fm350gl/mm-plugin-fm350gl.c
+diff -Naur modemmanager-1.24.0/src/plugins/fm350gl/mm-plugin-fm350gl.c modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-plugin-fm350gl.c
+--- modemmanager-1.24.0/src/plugins/fm350gl/mm-plugin-fm350gl.c	1970-01-01 03:00:00.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/fm350gl/mm-plugin-fm350gl.c	2026-08-16 21:50:49.322446878 +0300
 @@ -0,0 +1,102 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
@@ -1804,11 +2286,10 @@ index 0000000..24cf725
 +}
 +
 +
-diff --git a/src/plugins/meson.build b/src/plugins/meson.build
-index b21b5e3..6596369 100644
---- a/src/plugins/meson.build
-+++ b/src/plugins/meson.build
-@@ -792,6 +792,24 @@ if plugins_options['option']
+diff -Naur modemmanager-1.24.0/src/plugins/meson.build modemmanager-1.24.0-patched/src/plugins/meson.build
+--- modemmanager-1.24.0/src/plugins/meson.build	2025-04-10 04:30:25.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/meson.build	2026-08-16 21:50:49.322825478 +0300
+@@ -792,6 +792,24 @@
    }}
  endif
  
@@ -1833,11 +2314,10 @@ index b21b5e3..6596369 100644
  # plugin: option hso
  if plugins_options['option-hso']
    sources = files(
-diff --git a/src/plugins/mm-builtin-plugins.c b/src/plugins/mm-builtin-plugins.c
-index c7f9163..5b5425b 100644
---- a/src/plugins/mm-builtin-plugins.c
-+++ b/src/plugins/mm-builtin-plugins.c
-@@ -115,6 +115,9 @@ MMPlugin *mm_plugin_create_samsung (void);
+diff -Naur modemmanager-1.24.0/src/plugins/mm-builtin-plugins.c modemmanager-1.24.0-patched/src/plugins/mm-builtin-plugins.c
+--- modemmanager-1.24.0/src/plugins/mm-builtin-plugins.c	2025-04-10 04:30:25.000000000 +0300
++++ modemmanager-1.24.0-patched/src/plugins/mm-builtin-plugins.c	2026-08-16 21:50:49.323160679 +0300
+@@ -115,6 +115,9 @@
  #if defined ENABLE_PLUGIN_SIERRA
  MMPlugin *mm_plugin_create_sierra (void);
  #endif
@@ -1847,7 +2327,7 @@ index c7f9163..5b5425b 100644
  #if defined ENABLE_PLUGIN_SIERRA_LEGACY
  MMPlugin *mm_plugin_create_sierra_legacy (void);
  #endif
-@@ -253,6 +256,9 @@ mm_builtin_plugins_load (void)
+@@ -253,6 +256,9 @@
  #if defined ENABLE_PLUGIN_SIERRA
      PREPEND_PLUGIN (sierra);
  #endif
