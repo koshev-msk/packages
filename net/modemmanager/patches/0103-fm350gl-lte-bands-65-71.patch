@@ -1,0 +1,58 @@
+--- a/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c
++++ b/src/plugins/fm350gl/mm-broadband-modem-fm350gl.c
+@@ -536,6 +536,8 @@
+             return MM_MODEM_BAND_EUTRAN_1 + (number - 1);
+         if (number >= 17 && number <= 64)
+             return MM_MODEM_BAND_EUTRAN_17 + (number - 17);
++        if (number >= 65 && number <= 71)
++            return MM_MODEM_BAND_EUTRAN_65 + (number - 65);
+         return MM_MODEM_BAND_UNKNOWN;
+ 
+     case FM350GL_BAND_TYPE_NGRAN:
+@@ -636,6 +638,7 @@
+     fm350gl_append_bitmap_bands (bands, umts, 1, FM350GL_BAND_TYPE_UTRAN);
+     fm350gl_append_bitmap_bands (bands, lte[0], 1, FM350GL_BAND_TYPE_EUTRAN);
+     fm350gl_append_bitmap_bands (bands, lte[1], 33, FM350GL_BAND_TYPE_EUTRAN);
++    fm350gl_append_bitmap_bands (bands, lte[2], 65, FM350GL_BAND_TYPE_EUTRAN);
+     fm350gl_append_bitmap_bands (bands, nr[0], 1, FM350GL_BAND_TYPE_NGRAN);
+     fm350gl_append_bitmap_bands (bands, nr[1], 33, FM350GL_BAND_TYPE_NGRAN);
+     fm350gl_append_bitmap_bands (bands, nr[2], 65, FM350GL_BAND_TYPE_NGRAN);
+@@ -863,6 +866,13 @@
+     case MM_MODEM_BAND_EUTRAN_62: return 62;
+     case MM_MODEM_BAND_EUTRAN_63: return 63;
+     case MM_MODEM_BAND_EUTRAN_64: return 64;
++    case MM_MODEM_BAND_EUTRAN_65: return 65;
++    case MM_MODEM_BAND_EUTRAN_66: return 66;
++    case MM_MODEM_BAND_EUTRAN_67: return 67;
++    case MM_MODEM_BAND_EUTRAN_68: return 68;
++    case MM_MODEM_BAND_EUTRAN_69: return 69;
++    case MM_MODEM_BAND_EUTRAN_70: return 70;
++    case MM_MODEM_BAND_EUTRAN_71: return 71;
+ 
+     case MM_MODEM_BAND_NGRAN_1:  return 1;
+     case MM_MODEM_BAND_NGRAN_2:  return 2;
+@@ -959,7 +969,7 @@
+     }
+ 
+     umts = 0;
+-    lte[0] = lte[1] = 0;
++    lte[0] = lte[1] = lte[2] = lte[3] = 0;
+     nr[0] = nr[1] = nr[2] = nr[3] = 0;
+ 
+     for (i = 0; i < ctx->bands->len; i++) {
+@@ -1055,7 +1065,14 @@
+         case MM_MODEM_BAND_EUTRAN_61:
+         case MM_MODEM_BAND_EUTRAN_62:
+         case MM_MODEM_BAND_EUTRAN_63:
+-        case MM_MODEM_BAND_EUTRAN_64: {
++        case MM_MODEM_BAND_EUTRAN_64:
++        case MM_MODEM_BAND_EUTRAN_65:
++        case MM_MODEM_BAND_EUTRAN_66:
++        case MM_MODEM_BAND_EUTRAN_67:
++        case MM_MODEM_BAND_EUTRAN_68:
++        case MM_MODEM_BAND_EUTRAN_69:
++        case MM_MODEM_BAND_EUTRAN_70:
++        case MM_MODEM_BAND_EUTRAN_71: {
+             guint index = number - 1;
+             lte[index / 32] |= 1U << (index % 32);
+             break;
