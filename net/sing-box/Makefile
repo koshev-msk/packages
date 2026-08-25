@@ -25,6 +25,22 @@ GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_VERSION)
 include $(INCLUDE_DIR)/package.mk
 include ../../lang/golang/golang-package.mk
 
+# --- UPX support ---
+UPX:=$(STAGING_DIR_HOST)/bin/upx
+UPX_AVAILABLE:=$(shell [ -x "$(UPX)" ] && echo yes || echo no)
+
+ifeq ($(UPX_AVAILABLE),yes)
+define upxcompress
+	@echo "Compressing $(1) with UPX..."
+	$(UPX) --lzma --best $(1)
+endef
+else
+define upxcompress
+	@echo "UPX not found at $(UPX), skipping compression"
+endef
+endif
+# -------------------
+
 define Package/sing-box-default
   TITLE:=The universal proxy platform
   SECTION:=net
@@ -104,6 +120,10 @@ define Package/sing-box/config
 		config SINGBOX_WITH_WIREGUARD
 			bool "Build with WireGuard support"
 			default y
+
+		config SINGBOX_UPX
+			bool "Compress binary with UPX (saves ~60%, adds startup delay on slow CPUs)"
+			default y
 	endmenu
 endef
 
@@ -120,7 +140,8 @@ PKG_CONFIG_DEPENDS:= \
 	CONFIG_SINGBOX_WITH_TAILSCALE \
 	CONFIG_SINGBOX_WITH_UTLS \
 	CONFIG_SINGBOX_WITH_V2RAY_API \
-	CONFIG_SINGBOX_WITH_WIREGUARD
+	CONFIG_SINGBOX_WITH_WIREGUARD \
+	CONFIG_SINGBOX_UPX
 
 ifeq ($(BUILD_VARIANT),tiny)
 ifeq ($(CONFIG_SMALL_FLASH),)
@@ -157,6 +178,7 @@ Package/sing-box-tiny/conffiles=$(Package/sing-box/conffiles)
 define Package/sing-box/install
 	$(INSTALL_DIR) $(1)/usr/bin/
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/sing-box $(1)/usr/bin/sing-box
+	$(if $(CONFIG_SINGBOX_UPX),$(call upxcompress,$(1)/usr/bin/sing-box))
 
 	$(INSTALL_DIR) $(1)/etc/sing-box
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/release/config/config.json $(1)/etc/sing-box
