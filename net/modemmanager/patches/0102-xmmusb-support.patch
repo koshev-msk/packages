@@ -1,0 +1,3118 @@
+diff --git a/meson.build b/meson.build
+index 2bb89d6..609e296 100644
+--- a/meson.build
++++ b/meson.build
+@@ -370,6 +370,7 @@ plugins_options_reqs = {
+   'x22x': {'available': true, 'shared': []},
+   'zte': {'available': true, 'shared': ['icera']},
+   'fm350gl': {'available': true, 'shared': []},
++  'xmmusb': {'available': true, 'shared': []},
+ }
+ 
+ plugins_shared = {}
+diff --git a/meson_options.txt b/meson_options.txt
+index face517..0d5ff25 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -81,3 +81,4 @@ option('bash_completion', type: 'boolean', value: true, description: 'install ba
+ 
+ option('fuzzer', type: 'boolean', value: false, description: 'build fuzzer tests')
+ option('plugin_fm350gl', type: 'feature', value: 'auto', description: 'enable fm350gl plugin support')
++option('plugin_xmmusb', type: 'feature', value: 'auto', description: 'enable xmmusb plugin support (Intel XMM7360 USB CDC-ACM/NCM variant)')
+diff --git a/src/plugins/meson.build b/src/plugins/meson.build
+index 6596369..fa604c6 100644
+--- a/src/plugins/meson.build
++++ b/src/plugins/meson.build
+@@ -809,6 +809,23 @@ plugins_udev_rules += files('fm350gl/77-mm-fm350gl.rules')
+ endif
+ 
+ 
++# plugin: xmmusb
++if plugins_options['xmmusb']
++  sources = files(
++    'xmmusb/mm-plugin-xmmusb.c',
++    'xmmusb/mm-broadband-bearer-xmmusb.c',
++    'xmmusb/mm-broadband-modem-xmmusb.c',
++    'xmmusb/mm-modem-helpers-xmm.c',
++  )
++
++  plugins += {'plugin-xmmusb': {
++    'plugin': true,
++    'module': {'sources': sources, 'include_directories': plugins_incs, 'c_args': '-DMM_MODULE_NAME="xmmusb"'},
++  }}
++plugins_udev_rules += files('xmmusb/77-mm-xmmusb.rules')
++endif
++
++
+ 
+ # plugin: option hso
+ if plugins_options['option-hso']
+diff --git a/src/plugins/mm-builtin-plugins.c b/src/plugins/mm-builtin-plugins.c
+index 5b5425b..cac7851 100644
+--- a/src/plugins/mm-builtin-plugins.c
++++ b/src/plugins/mm-builtin-plugins.c
+@@ -118,6 +118,9 @@ MMPlugin *mm_plugin_create_sierra (void);
+ #if defined ENABLE_PLUGIN_FM350GL
+ MMPlugin *mm_plugin_create_fm350gl (void);
+ #endif
++#if defined ENABLE_PLUGIN_XMMUSB
++MMPlugin *mm_plugin_create_xmmusb (void);
++#endif
+ #if defined ENABLE_PLUGIN_SIERRA_LEGACY
+ MMPlugin *mm_plugin_create_sierra_legacy (void);
+ #endif
+@@ -259,6 +262,9 @@ mm_builtin_plugins_load (void)
+ #if defined ENABLE_PLUGIN_FM350GL
+     PREPEND_PLUGIN (fm350gl);
+ #endif
++#if defined ENABLE_PLUGIN_XMMUSB
++    PREPEND_PLUGIN (xmmusb);
++#endif
+ #if defined ENABLE_PLUGIN_SIERRA_LEGACY
+     PREPEND_PLUGIN (sierra_legacy);
+ #endif
+diff --git a/src/plugins/xmmusb/77-mm-xmmusb.rules b/src/plugins/xmmusb/77-mm-xmmusb.rules
+new file mode 100644
+index 0000000..35b72ef
+--- /dev/null
++++ b/src/plugins/xmmusb/77-mm-xmmusb.rules
+@@ -0,0 +1,23 @@
++# /lib/udev/rules.d/77-mm-xmmusb.rules
++#
++# Interface layout confirmed from `lsusb -v` on Intel 8087:095a
++# (Fibocom L860-GL / Intel XMM7360, plain-USB CDC-ACM+CDC-NCM variant):
++#   if 00 -> CDC-ACM control (AT primary: AT+CMEE, AT+COPS, AT+CGDCONT...)
++#   if 02 -> CDC-ACM control (AT secondary: AT+XDNS)
++#   if 04 -> CDC-ACM control (unused - diagnostic/log port, ignored)
++#   if 06/08/10 -> CDC-NCM (net data, no tty node created)
++
++ACTION!="add|change|move|bind", GOTO="mm_xmmusb_port_types_end"
++SUBSYSTEMS=="usb", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", GOTO="mm_xmmusb_port_types_vendorcheck"
++GOTO="mm_xmmusb_port_types_end"
++
++LABEL="mm_xmmusb_port_types_vendorcheck"
++SUBSYSTEMS=="usb", ATTRS{bInterfaceNumber}=="?*", ENV{.MM_USBIFNUM}="$attr{bInterfaceNumber}"
++
++ENV{.MM_USBIFNUM}=="00", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_PRIMARY}="1"
++ENV{.MM_USBIFNUM}=="02", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
++ENV{.MM_USBIFNUM}=="04", SUBSYSTEM=="tty", ENV{ID_MM_PORT_IGNORE}="1"
++
++GOTO="mm_xmmusb_port_types_end"
++
++LABEL="mm_xmmusb_port_types_end"
+diff --git a/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.c b/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.c
+new file mode 100644
+index 0000000..58a2e40
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.c
+@@ -0,0 +1,833 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details:
++ *
++ * Dial sequence based on the userspace xmm7360-pci "open_xdatachannel.py"
++ * flow, ported here for the plain-USB CDC-ACM+CDC-NCM variant of the
++ * Intel XMM7360 modem (as opposed to the PCIe/iosm/wwan-RPC variant that
++ * upstream ModemManager's 'intel' plugin already supports since 1.26).
++ */
++
++#include <config.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <string.h>
++#include <ctype.h>
++
++#include <ModemManager.h>
++#define _LIBMM_INSIDE_MM
++#include <libmm-glib.h>
++
++#include "mm-base-modem-at.h"
++#include "mm-broadband-bearer-xmmusb.h"
++#include "mm-log-object.h"
++
++/* USB function path strings used by the XMM7360 RPC/AT firmware to bind
++ * the AT control channel to the CDC-NCM data channel. These match what
++ * the modem itself reports in its endpoint descriptors ("/USBCDC/0",
++ * "/USBHS/NCM/0") and are constant across USB variants of this chipset. */
++#define XMMUSB_CDC_PATH "/USBCDC/0"
++#define XMMUSB_NCM_PATH "/USBHS/NCM/0"
++
++static MMPort * dial_3gpp_finish (MMBroadbandBearer *self, GAsyncResult *res, GError **error);
++static void dial_3gpp (MMBroadbandBearer *self, MMBaseModem *modem, MMPortSerialAt *primary, guint cid, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
++static void get_ip_config_3gpp (MMBroadbandBearer *self, MMBroadbandModem *modem, MMPortSerialAt *primary, MMPortSerialAt *secondary, MMPort *data, guint cid, MMBearerIpFamily ip_family, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean get_ip_config_3gpp_finish (MMBroadbandBearer *self, GAsyncResult *res, MMBearerIpConfig **ipv4_config, MMBearerIpConfig **ipv6_config, GError **error);
++static void disconnect_3gpp (MMBroadbandBearer *self, MMBroadbandModem *modem, MMPortSerialAt *primary, MMPortSerialAt *secondary, MMPort *data, guint cid, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean parse_ip (const gchar *response, MMBearerIpConfig *out_ip4_config, MMBearerIpConfig *out_ip6_config, GError **error);
++static void deztohexip (gchar *dezstring, GString *output);
++
++G_DEFINE_TYPE (MMBroadbandBearerXmmUsb, mm_broadband_bearer_xmmusb, MM_TYPE_BROADBAND_BEARER);
++
++struct _MMBroadbandBearerXmmUsbPrivate {
++    MMPort *port;
++};
++
++/*****************************************************************************/
++/* Construction */
++
++void
++mm_broadband_bearer_xmmusb_new (MMBroadbandModem *modem,
++                                 MMBearerProperties *bearer_properties,
++                                 GCancellable *cancellable,
++                                 GAsyncReadyCallback callback,
++                                 gpointer user_data)
++{
++    g_async_initable_new_async (
++        MM_TYPE_BROADBAND_BEARER_XMMUSB,
++        G_PRIORITY_DEFAULT,
++        cancellable,
++        callback,
++        user_data,
++        MM_BASE_BEARER_MODEM,  modem,
++        MM_BASE_BEARER_CONFIG, bearer_properties,
++        NULL);
++}
++
++MMBaseBearer *
++mm_broadband_bearer_xmmusb_new_finish (GAsyncResult *res,
++                                        GError **error)
++{
++    GObject *bearer;
++    GObject *source;
++
++    source = g_async_result_get_source_object (res);
++    bearer = g_async_initable_new_finish (G_ASYNC_INITABLE (source), res, error);
++    g_object_unref (source);
++
++    if (!bearer)
++        return NULL;
++
++    mm_base_bearer_export (MM_BASE_BEARER (bearer));
++    return MM_BASE_BEARER (bearer);
++}
++
++/*****************************************************************************/
++/* Dial (3GPP) - full sequence matching the working xmm-connect.gcom:
++ *   AT+CGDCONT=<cid>                       (clear any stale definition)
++ *   AT+CGDCONT=<cid>,"<pdp>","<apn>"       (define APN for OUR cid)
++ *   AT+CGACT=1,<cid>                       (activate the context)
++ *   AT+XDATACHANNEL=1,1,"<at>","<ncm>",2,<cid>
++ *   AT+CGDATA="M-RAW_IP",<cid>
++ *
++ * The cid MM allocates for this bearer is generally NOT the same cid
++ * used by the initial EPS default bearer that comes up automatically
++ * on network attach - that one is already active, but our own cid
++ * has no APN definition and no active context unless we activate it
++ * ourselves here. Skipping CGDCONT/CGACT lets XDATACHANNEL/CGDATA
++ * "succeed" against a nonexistent context: MM reports connected, but
++ * no traffic ever flows over the NCM interface. */
++
++typedef struct {
++    MMBaseModem *modem;
++    MMPortSerialAt *primary;
++    guint cid;
++} Dial3gppContext;
++
++static void
++dial_3gpp_context_free (Dial3gppContext *ctx)
++{
++    g_object_unref (ctx->primary);
++    g_object_unref (ctx->modem);
++    g_slice_free (Dial3gppContext, ctx);
++}
++
++static MMPort *
++dial_3gpp_finish (MMBroadbandBearer *self,
++                   GAsyncResult *res,
++                   GError **error)
++{
++    return g_task_propagate_pointer (G_TASK (res), error);
++}
++
++static void
++cgdata_ready (MMBaseModem *modem,
++              GAsyncResult *res,
++              GTask *task)
++{
++    GError *error = NULL;
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++    /* ARP disable on net ifaces */
++    MMPort *net_port = mm_base_modem_peek_best_data_port (modem, MM_PORT_TYPE_NET);
++    if (net_port) {
++        const char *iface = mm_port_get_device (net_port);
++        if (iface && *iface) {
++            gchar *cmd = g_strdup_printf ("/sbin/ip link set dev %s arp off", iface);
++            if (g_spawn_command_line_async (cmd, NULL)) {
++                mm_obj_dbg (modem, "ARP disabled on interface %s", iface);
++            } else {
++                mm_obj_dbg (modem, "Failed to disable ARP on interface %s", iface);
++            }
++            g_free (cmd);
++        }
++    }
++
++
++    /* Data now flows over the CDC-NCM interface; hand back the net port
++     * ModemManager already associated with this modem. */
++    g_task_return_pointer (task,
++                            g_object_ref (mm_base_modem_peek_best_data_port (modem, MM_PORT_TYPE_NET)),
++                            g_object_unref);
++    g_object_unref (task);
++}
++
++static void
++xdatachannel_ready (MMBaseModem *modem,
++                     GAsyncResult *res,
++                     GTask *task)
++{
++    Dial3gppContext *ctx;
++    GError *error = NULL;
++    gchar *command;
++
++    ctx = g_task_get_task_data (task);
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    /* Switch the PDP context into raw-IP data mode over the channel we
++     * just bound above. */
++    command = g_strdup_printf ("+CGDATA=\"M-RAW_IP\",%d", ctx->cid);
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) cgdata_ready,
++                                    task);
++    g_free (command);
++}
++
++static void
++cgact_ready (MMBaseModem *modem,
++             GAsyncResult *res,
++             GTask *task)
++{
++    Dial3gppContext *ctx;
++    GError *error = NULL;
++    gchar *command;
++
++    ctx = g_task_get_task_data (task);
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    command = g_strdup_printf ("+XDATACHANNEL=1,1,\"%s\",\"%s\",2,%d",
++                                XMMUSB_CDC_PATH, XMMUSB_NCM_PATH, ctx->cid);
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) xdatachannel_ready,
++                                    task);
++    g_free (command);
++}
++
++static void
++cgdcont_set_ready (MMBaseModem *modem,
++                    GAsyncResult *res,
++                    GTask *task)
++{
++    Dial3gppContext *ctx;
++    GError *error = NULL;
++    gchar *command;
++
++    ctx = g_task_get_task_data (task);
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    command = g_strdup_printf ("+CGACT=1,%d", ctx->cid);
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) cgact_ready,
++                                    task);
++    g_free (command);
++}
++
++static void
++cgdcont_clear_ready (MMBaseModem *modem,
++                      GAsyncResult *res,
++                      GTask *task)
++{
++    Dial3gppContext *ctx;
++    MMBearerProperties *props;
++    const gchar *apn;
++    MMBearerIpFamily ip_family;
++    const gchar *pdp;
++    gchar *command;
++
++    /* Not fatal if clearing an unset context definition errors out. */
++    mm_base_modem_at_command_full_finish (modem, res, NULL);
++
++    ctx = g_task_get_task_data (task);
++
++    props = mm_base_bearer_peek_config (MM_BASE_BEARER (g_task_get_source_object (task)));
++    apn = props ? mm_bearer_properties_get_apn (props) : NULL;
++    ip_family = props ? mm_bearer_properties_get_ip_type (props) : MM_BEARER_IP_FAMILY_IPV4;
++
++    switch (ip_family) {
++        case MM_BEARER_IP_FAMILY_IPV6:
++            pdp = "IPV6";
++            break;
++        case MM_BEARER_IP_FAMILY_IPV4V6:
++            pdp = "IPV4V6";
++            break;
++        default:
++            pdp = "IP";
++            break;
++    }
++
++    command = g_strdup_printf ("+CGDCONT=%d,\"%s\",\"%s\"", ctx->cid, pdp, apn ? apn : "");
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) cgdcont_set_ready,
++                                    task);
++    g_free (command);
++}
++
++static void
++dial_3gpp (MMBroadbandBearer *self,
++           MMBaseModem *modem,
++           MMPortSerialAt *primary,
++           guint cid,
++           GCancellable *cancellable,
++           GAsyncReadyCallback callback,
++           gpointer user_data)
++{
++    Dial3gppContext *ctx;
++    GTask *task;
++    gchar *command;
++
++    g_assert (primary != NULL);
++
++    ctx = g_slice_new0 (Dial3gppContext);
++    ctx->modem = g_object_ref (modem);
++    ctx->primary = g_object_ref (primary);
++    ctx->cid = cid;
++
++    task = g_task_new (self, cancellable, callback, user_data);
++    g_task_set_task_data (task, ctx, (GDestroyNotify) dial_3gpp_context_free);
++
++    /* Clear any stale APN definition on our cid first - mirrors
++     * "AT+CGDCONT=<cid>" (no value part) in xmm-connect.gcom. */
++    command = g_strdup_printf ("+CGDCONT=%d", cid);
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    MM_BASE_BEARER_DEFAULT_CONNECTION_TIMEOUT,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) cgdcont_clear_ready,
++                                    task);
++    g_free (command);
++}
++
++/*****************************************************************************/
++/* Disconnect (3GPP) - matches xmm-disconnect.gcom exactly:
++ *   AT+CGACT=0,<cid>     (deactivate the context FIRST)
++ *   AT+XDATACHANNEL=0    (bare command, no path/cid arguments at all)
++ *
++ * Confirmed against the working userspace script: the order is the
++ * reverse of what you might expect from dial_3gpp, and XDATACHANNEL=0
++ * takes no other arguments on teardown. */
++
++typedef struct {
++    MMBaseModem *modem;
++    MMPortSerialAt *primary;
++    guint cid;
++} Disconnect3gppContext;
++
++static void
++disconnect_3gpp_context_free (Disconnect3gppContext *ctx)
++{
++    g_object_unref (ctx->primary);
++    g_object_unref (ctx->modem);
++    g_slice_free (Disconnect3gppContext, ctx);
++}
++
++static void
++xdatachannel_disconnect_ready (MMBaseModem *modem,
++                                GAsyncResult *res,
++                                GTask *task)
++{
++    GError *error = NULL;
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        mm_obj_dbg (g_task_get_source_object (task),
++                    "XDATACHANNEL teardown failed (not fatal): %s", error->message);
++        g_error_free (error);
++    }
++
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++cgact_disconnect_ready (MMBaseModem *modem,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    Disconnect3gppContext *ctx;
++    GError *error = NULL;
++
++    ctx = g_task_get_task_data (task);
++
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        /* Not fatal: still try to unbind the data channel below. */
++        mm_obj_dbg (g_task_get_source_object (task),
++                    "PDP context deactivation failed (continuing with XDATACHANNEL=0): %s", error->message);
++        g_error_free (error);
++    }
++
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    "+XDATACHANNEL=0",
++                                    45,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) xdatachannel_disconnect_ready,
++                                    task);
++}
++
++static void
++disconnect_3gpp (MMBroadbandBearer *self,
++                  MMBroadbandModem *modem,
++                  MMPortSerialAt *primary,
++                  MMPortSerialAt *secondary,
++                  MMPort *data,
++                  guint cid,
++                  GAsyncReadyCallback callback,
++                  gpointer user_data)
++{
++    Disconnect3gppContext *ctx;
++    GTask *task;
++    gchar *command;
++
++    g_assert (primary != NULL);
++
++    ctx = g_slice_new0 (Disconnect3gppContext);
++    ctx->modem = MM_BASE_MODEM (g_object_ref (modem));
++    ctx->primary = g_object_ref (primary);
++    ctx->cid = cid;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    g_task_set_task_data (task, ctx, (GDestroyNotify) disconnect_3gpp_context_free);
++
++    command = g_strdup_printf ("+CGACT=0,%d", cid);
++    mm_base_modem_at_command_full (ctx->modem,
++                                    MM_IFACE_PORT_AT (primary),
++                                    command,
++                                    45,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) cgact_disconnect_ready,
++                                    task);
++    g_free (command);
++}
++
++/*****************************************************************************/
++/* IP config (3GPP) - identical AT+CGPADDR / AT+CGCONTRDP flow as used in
++ * the fm350gl bearer; these are plain 3GPP TS 27.007 commands, not
++ * XMM7360-specific, so the parsing logic is reused as-is. */
++
++static void
++deztohexip (gchar *dezstring, GString *output)
++{
++    GString *dstr = g_string_new (dezstring);
++    gchar **parts;
++    int c, i;
++
++    parts = g_strsplit (dstr->str, ".", -1);
++    c = g_strv_length (parts);
++
++    for (i = 0; i < c; i++) {
++        if (i == 0)
++            g_string_append_printf (output, "%02x", atoi (parts[i]));
++        else {
++            if (i % 2 == 0)
++                g_string_append (output, ":");
++            g_string_append_printf (output, "%02x", atoi (parts[i]));
++        }
++    }
++    g_strfreev (parts);
++    g_string_free (dstr, TRUE);
++}
++
++static gchar *
++first_four_octets (gchar **octets, guint n)
++{
++    /* On this modem AT+CGPADDR (and AT+CGCONTRDP's local_addr field)
++     * report the IPv4 address with the subnet mask concatenated onto
++     * it as 4 more dotted octets - "10.14.25.48.255.0.0.0" means
++     * address 10.14.25.48, mask 255.0.0.0, not an 8-octet address.
++     * Take just the first 4 octets as the real address. */
++    if (n < 4)
++        return NULL;
++    return g_strdup_printf ("%s.%s.%s.%s", octets[0], octets[1], octets[2], octets[3]);
++}
++
++static gboolean
++parse_ip (const gchar *response,
++          MMBearerIpConfig *out_ip4_config,
++          MMBearerIpConfig *out_ip6_config,
++          GError **error)
++{
++    gchar **data;
++    gchar **data1;
++    gchar **data2;
++    gchar *ip1;
++    gchar *ip2;
++    gchar *ipv4;
++    gchar *ipv6;
++    GString *gstmp;
++    int c;
++    GString *s;
++
++    g_return_val_if_fail (out_ip4_config, FALSE);
++    g_return_val_if_fail (out_ip6_config, FALSE);
++
++    if (!response || !g_str_has_prefix (response, "+CGPADDR")) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Missing +CGPADDR prefix");
++        return FALSE;
++    }
++
++    response = mm_strip_tag (response, "+CGPADDR: ");
++
++    s = g_string_new (response);
++    g_string_replace (s, "\"", "", -1);
++    data = g_strsplit (s->str, ",", -1);
++    c = g_strv_length (data);
++
++    if (c != 2 && c != 3) {
++        g_set_error_literal (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't match +CGPADDR reply");
++        g_strfreev (data);
++        g_string_free (s, TRUE);
++        return FALSE;
++    }
++
++    ipv4 = NULL;
++    ipv6 = NULL;
++    ip1 = g_strdup (data[1]);
++    ip2 = (c == 3) ? g_strdup (data[2]) : NULL;
++    g_strfreev (data);
++    g_string_free (s, TRUE);
++
++    mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_UNKNOWN);
++    mm_bearer_ip_config_set_method (out_ip6_config, MM_BEARER_IP_METHOD_UNKNOWN);
++
++    data1 = g_strsplit (ip1, ".", -1);
++    c = g_strv_length (data1);
++    if (c == 4) {
++        ipv4 = g_strdup (ip1);
++    } else if (c == 8) {
++        /* addr+mask concatenated - see first_four_octets(). */
++        ipv4 = first_four_octets (data1, c);
++    }
++    if (ipv4) {
++        mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC);
++        mm_bearer_ip_config_set_address (out_ip4_config, ipv4);
++        mm_bearer_ip_config_set_prefix (out_ip4_config, 24);
++        /* Real gateway comes from AT+CGCONTRDP (see ip_config_dns_gw_ready),
++         * NOT from here - setting gateway == our own address made netifd
++         * try "ip route add default via <our-own-ip>", which the kernel
++         * rejects, and that silent route-setup failure is very likely why
++         * the connection got torn down again right after MM reported it
++         * as fully connected. */
++        g_free (ipv4);
++        ipv4 = NULL;
++    }
++    if (c == 16)
++        mm_bearer_ip_config_set_method (out_ip6_config, MM_BEARER_IP_METHOD_DHCP);
++    g_strfreev (data1);
++
++    if (ip2) {
++        data2 = g_strsplit (ip2, ".", -1);
++        c = g_strv_length (data2);
++        if (c == 4) {
++            ipv4 = g_strdup (ip2);
++        } else if (c == 8) {
++            ipv4 = first_four_octets (data2, c);
++        }
++        if (ipv4) {
++            mm_bearer_ip_config_set_method (out_ip4_config, MM_BEARER_IP_METHOD_STATIC);
++            mm_bearer_ip_config_set_address (out_ip4_config, ipv4);
++            mm_bearer_ip_config_set_prefix (out_ip4_config, 24);
++            g_free (ipv4);
++            ipv4 = NULL;
++        }
++        if (c == 16) {
++            ipv6 = ip2;
++            mm_bearer_ip_config_set_method (out_ip6_config, MM_BEARER_IP_METHOD_DHCP);
++            gstmp = g_string_new ("");
++            deztohexip (ipv6, gstmp);
++            ipv6 = gstmp->str;
++        }
++        g_strfreev (data2);
++    }
++
++    mm_obj_info (NULL, "ipv4: %s", mm_bearer_ip_config_get_address (out_ip4_config));
++    mm_obj_info (NULL, "ipv6: %s", ipv6 ? ipv6 : "(none)");
++
++    g_free (ip1);
++    g_free (ip2);
++
++    return TRUE;
++}
++
++typedef struct {
++    MMBaseModem *modem;
++    MMPortSerialAt *primary;
++    guint cid;
++    MMBearerIpConfig *ipv4_config;
++    MMBearerIpConfig *ipv6_config;
++} GetIpConfig3gppContext;
++
++static void
++get_ip_config_context_free (GetIpConfig3gppContext *ctx)
++{
++    g_object_unref (ctx->primary);
++    g_object_unref (ctx->modem);
++    g_clear_object (&ctx->ipv4_config);
++    g_clear_object (&ctx->ipv6_config);
++    g_slice_free (GetIpConfig3gppContext, ctx);
++}
++
++static gboolean
++get_ip_config_3gpp_finish (MMBroadbandBearer *self,
++                            GAsyncResult *res,
++                            MMBearerIpConfig **ipv4_config,
++                            MMBearerIpConfig **ipv6_config,
++                            GError **error)
++{
++    MMBearerConnectResult *configs;
++    MMBearerIpConfig *ipv4, *ipv6;
++
++    configs = g_task_propagate_pointer (G_TASK (res), error);
++    if (!configs)
++        return FALSE;
++
++    ipv4 = mm_bearer_connect_result_peek_ipv4_config (configs);
++    ipv6 = mm_bearer_connect_result_peek_ipv6_config (configs);
++    g_assert (ipv4 || ipv6);
++    if (ipv4_config && ipv4)
++        *ipv4_config = g_object_ref (ipv4);
++    if (ipv6_config && ipv6)
++        *ipv6_config = g_object_ref (ipv6);
++
++    mm_bearer_connect_result_unref (configs);
++    return TRUE;
++}
++
++static void
++ip_config_dns_gw_ready (MMBaseModem *modem, GAsyncResult *res, GTask *task)
++{
++    GetIpConfig3gppContext *ctx;
++    const gchar *response;
++    GError *error = NULL;
++    MMBearerConnectResult *connect_result;
++    gchar *gw, *dns1, *dns2, *dnsv61, *dnsv62;
++    const gchar *dns[3] = { 0 };
++    const gchar *dnsv6[3] = { 0 };
++    GString *s;
++    gchar **data;
++    int c;
++    GString *gstmp;
++
++    ctx = g_task_get_task_data (task);
++    response = mm_base_modem_at_command_full_finish (modem, res, &error);
++
++    if (!response || !g_str_has_prefix (response, "+CGCONTRDP")) {
++        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Missing +CGCONTRDP prefix");
++        g_clear_error (&error);
++        return;
++    }
++
++    response = mm_strip_tag (response, "+CGCONTRDP: ");
++    s = g_string_new (response);
++    g_string_replace (s, "\"", "", -1);
++
++    data = g_strsplit (s->str, ",", -1);
++    c = g_strv_length (data);
++
++    /* AT+CGCONTRDP has a minimum of 7 fields (cid, bearer_id, apn,
++     * local_addr+mask, gw_addr, dns_prim, dns_sec) per 3GPP TS 27.007;
++     * everything past that (P-CSCF, IPv6 DNS at indices 28/29, MTU,
++     * etc) is optional and modem/PDP-type dependent. Previously this
++     * demanded 30 fields unconditionally and would reject every plain
++     * IPv4 response, and unconditionally read data[28]/data[29] for
++     * IPv6 DNS even when they didn't exist. */
++    if (c < 7) {
++        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                  "Couldn't match +CGCONTRDP reply (got %d fields, need at least 7)", c);
++        g_strfreev (data);
++        g_string_free (s, TRUE);
++        return;
++    }
++
++    gw = g_strdup (data[4]);
++    dns1 = g_strdup (data[5]);
++    dns2 = g_strdup (data[6]);
++    dnsv61 = (c > 28 && data[28] && *data[28]) ? g_strdup (data[28]) : NULL;
++    dnsv62 = (c > 29 && data[29] && *data[29]) ? g_strdup (data[29]) : NULL;
++    g_strfreev (data);
++    g_string_free (s, TRUE);
++
++    if (gw && *gw)
++        mm_bearer_ip_config_set_gateway (ctx->ipv4_config, gw);
++    g_free (gw);
++
++    if (dnsv61) {
++        gstmp = g_string_new ("");
++        deztohexip (dnsv61, gstmp);
++        g_free (dnsv61);
++        dnsv61 = g_string_free (gstmp, FALSE);
++    }
++
++    if (dnsv62) {
++        gstmp = g_string_new ("");
++        deztohexip (dnsv62, gstmp);
++        g_free (dnsv62);
++        dnsv62 = g_string_free (gstmp, FALSE);
++    }
++
++    dns[0] = dns1;
++    dns[1] = dns2;
++    dnsv6[0] = dnsv61;
++    dnsv6[1] = dnsv62;
++
++    mm_bearer_ip_config_set_dns (ctx->ipv4_config, dns);
++    if (dnsv61 || dnsv62)
++        mm_bearer_ip_config_set_dns (ctx->ipv6_config, dnsv6);
++
++    connect_result = mm_bearer_connect_result_new (mm_base_modem_peek_best_data_port (modem, MM_PORT_TYPE_NET),
++                                                     ctx->ipv4_config, ctx->ipv6_config);
++
++    g_free (dns1);
++    g_free (dns2);
++    g_free (dnsv61);
++    g_free (dnsv62);
++
++    g_task_return_pointer (task, connect_result, (GDestroyNotify) mm_bearer_connect_result_unref);
++    g_object_unref (task);
++}
++
++static void
++ip_config_ipaddress_ready (MMBaseModem *modem,
++                            GAsyncResult *res,
++                            GTask *task)
++{
++    gchar *command;
++    const gchar *response;
++    GError *error = NULL;
++    GetIpConfig3gppContext *ctx;
++
++    ctx = g_task_get_task_data (task);
++    ctx->ipv4_config = mm_bearer_ip_config_new ();
++    ctx->ipv6_config = mm_bearer_ip_config_new ();
++
++    response = mm_base_modem_at_command_full_finish (modem, res, &error);
++    if (!response) {
++        mm_obj_dbg (NULL, "AT+CGPADDR failed, no IP data: %s", error->message);
++        g_task_return_error (task, error);
++        return;
++    }
++
++    if (!parse_ip (response, ctx->ipv4_config, ctx->ipv6_config, &error)) {
++        g_task_return_error (task, error);
++        return;
++    }
++
++    command = g_strdup_printf ("AT+CGCONTRDP=%d", ctx->cid);
++    mm_base_modem_at_command_full (MM_BASE_MODEM (modem),
++                                    MM_IFACE_PORT_AT (ctx->primary),
++                                    command,
++                                    3,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) ip_config_dns_gw_ready,
++                                    task);
++    g_free (command);
++}
++
++static void
++get_ip_config_3gpp (MMBroadbandBearer *self,
++                     MMBroadbandModem *modem,
++                     MMPortSerialAt *primary,
++                     MMPortSerialAt *secondary,
++                     MMPort *data,
++                     guint cid,
++                     MMBearerIpFamily ip_family,
++                     GAsyncReadyCallback callback,
++                     gpointer user_data)
++{
++    GetIpConfig3gppContext *ctx;
++    GTask *task;
++    gchar *command;
++
++    mm_obj_info (NULL, "xmmusb data port: %s", mm_port_get_device (data));
++
++    ctx = g_slice_new0 (GetIpConfig3gppContext);
++    ctx->modem = MM_BASE_MODEM (g_object_ref (modem));
++    ctx->primary = g_object_ref (primary);
++    ctx->cid = cid;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    g_task_set_task_data (task, ctx, (GDestroyNotify) get_ip_config_context_free);
++
++    command = g_strdup_printf ("AT+CGPADDR=%d", cid);
++    mm_base_modem_at_command_full (MM_BASE_MODEM (modem),
++                                    MM_IFACE_PORT_AT (primary),
++                                    command,
++                                    3,
++                                    FALSE,
++                                    FALSE, /* raw */
++                                    NULL, /* cancellable */
++                                    (GAsyncReadyCallback) ip_config_ipaddress_ready,
++                                    task);
++    g_free (command);
++}
++
++/*****************************************************************************/
++
++static void
++mm_broadband_bearer_xmmusb_init (MMBroadbandBearerXmmUsb *self)
++{
++    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self,
++                                               MM_TYPE_BROADBAND_BEARER_XMMUSB,
++                                               MMBroadbandBearerXmmUsbPrivate);
++}
++
++static void
++mm_broadband_bearer_xmmusb_class_init (MMBroadbandBearerXmmUsbClass *klass)
++{
++    MMBroadbandBearerClass *broadband_bearer_class = MM_BROADBAND_BEARER_CLASS (klass);
++
++    broadband_bearer_class->dial_3gpp = dial_3gpp;
++    broadband_bearer_class->dial_3gpp_finish = dial_3gpp_finish;
++    broadband_bearer_class->get_ip_config_3gpp = get_ip_config_3gpp;
++    broadband_bearer_class->get_ip_config_3gpp_finish = get_ip_config_3gpp_finish;
++    broadband_bearer_class->disconnect_3gpp = disconnect_3gpp;
++}
+diff --git a/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.h b/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.h
+new file mode 100644
+index 0000000..67b6d9d
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-broadband-bearer-xmmusb.h
+@@ -0,0 +1,57 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details:
++ */
++
++#ifndef MM_BROADBAND_BEARER_XMMUSB_H
++#define MM_BROADBAND_BEARER_XMMUSB_H
++
++#include <glib.h>
++#include <glib-object.h>
++
++#define _LIBMM_INSIDE_MM
++#include <libmm-glib.h>
++
++#include "mm-broadband-bearer.h"
++#include "mm-broadband-modem-xmmusb.h"
++
++#define MM_TYPE_BROADBAND_BEARER_XMMUSB            (mm_broadband_bearer_xmmusb_get_type ())
++#define MM_BROADBAND_BEARER_XMMUSB(obj)             (G_TYPE_CHECK_INSTANCE_CAST ((obj), MM_TYPE_BROADBAND_BEARER_XMMUSB, MMBroadbandBearerXmmUsb))
++#define MM_BROADBAND_BEARER_XMMUSB_CLASS(klass)     (G_TYPE_CHECK_CLASS_CAST ((klass),  MM_TYPE_BROADBAND_BEARER_XMMUSB, MMBroadbandBearerXmmUsbClass))
++#define MM_IS_BROADBAND_BEARER_XMMUSB(obj)          (G_TYPE_CHECK_INSTANCE_TYPE ((obj), MM_TYPE_BROADBAND_BEARER_XMMUSB))
++#define MM_IS_BROADBAND_BEARER_XMMUSB_CLASS(klass)  (G_TYPE_CHECK_CLASS_TYPE ((klass),  MM_TYPE_BROADBAND_BEARER_XMMUSB))
++#define MM_BROADBAND_BEARER_XMMUSB_GET_CLASS(obj)   (G_TYPE_INSTANCE_GET_CLASS ((obj),  MM_TYPE_BROADBAND_BEARER_XMMUSB, MMBroadbandBearerXmmUsbClass))
++
++typedef struct _MMBroadbandBearerXmmUsb MMBroadbandBearerXmmUsb;
++typedef struct _MMBroadbandBearerXmmUsbClass MMBroadbandBearerXmmUsbClass;
++typedef struct _MMBroadbandBearerXmmUsbPrivate MMBroadbandBearerXmmUsbPrivate;
++
++struct _MMBroadbandBearerXmmUsb {
++    MMBroadbandBearer parent;
++    MMBroadbandBearerXmmUsbPrivate *priv;
++};
++
++struct _MMBroadbandBearerXmmUsbClass {
++    MMBroadbandBearerClass parent;
++};
++
++GType mm_broadband_bearer_xmmusb_get_type (void);
++
++void mm_broadband_bearer_xmmusb_new (MMBroadbandModem *modem,
++                                      MMBearerProperties *bearer_properties,
++                                      GCancellable *cancellable,
++                                      GAsyncReadyCallback callback,
++                                      gpointer user_data);
++
++MMBaseBearer *mm_broadband_bearer_xmmusb_new_finish (GAsyncResult *res,
++                                                      GError **error);
++
++#endif /* MM_BROADBAND_BEARER_XMMUSB_H */
+diff --git a/src/plugins/xmmusb/mm-broadband-modem-xmmusb.c b/src/plugins/xmmusb/mm-broadband-modem-xmmusb.c
+new file mode 100644
+index 0000000..5118b06
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-broadband-modem-xmmusb.c
+@@ -0,0 +1,898 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * Registration, signal quality (+CSQ), operator selection (+COPS) etc.
++ * all work with the stock 3GPP command set on this modem, per the
++ * existing gcom script - left to the generic MMBroadbandModem/
++ * MMIfaceModem AT implementation.
++ *
++ * Bands, modes and set_current_modes/bands are implemented on top of
++ * mm_xmm_parse_xact_test_response()/mm_xmm_parse_xact_query_response()/
++ * mm_xmm_build_xact_set_command() from mm-modem-helpers-xmm.c, vendored
++ * verbatim from ModemManager's own src/plugins/xmm/ (the real, tested
++ * AT+XACT implementation already used for other Intel XMM7360-based
++ * modems upstream) rather than a hand-rolled parser.
++ *
++ * Dialing needs AT+XDATACHANNEL, which is XMM7360-USB specific and NOT
++ * part of the upstream xmm helpers - handled in MMBroadbandBearerXmmUsb.
++ */
++
++#include <config.h>
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "ModemManager.h"
++#include "mm-broadband-modem-xmmusb.h"
++#include "mm-broadband-bearer-xmmusb.h"
++#include "mm-base-modem-at.h"
++#include "mm-log-object.h"
++#include "mm-iface-modem.h"
++#include "mm-iface-modem-3gpp-profile-manager.h"
++#include "mm-modem-helpers.h"
++#include "mm-modem-helpers-xmm.h"
++
++static void iface_modem_init (MMIfaceModemInterface *iface);
++static void iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface);
++
++static MMBaseBearer *modem_create_bearer_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++static void modem_create_bearer (MMIfaceModem *self, MMBearerProperties *properties, GAsyncReadyCallback callback, gpointer user_data);
++
++static void load_supported_capabilities (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static GArray *load_supported_capabilities_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++
++static void load_supported_modes (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static GArray *load_supported_modes_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++static void load_supported_bands (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static GArray *load_supported_bands_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++
++static void load_current_modes (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean load_current_modes_finish (MMIfaceModem *self, GAsyncResult *res, MMModemMode *allowed, MMModemMode *preferred, GError **error);
++static void load_current_bands (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static GArray *load_current_bands_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++
++static void set_current_modes (MMIfaceModem *self, MMModemMode allowed, MMModemMode preferred, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean set_current_modes_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++static void set_current_bands (MMIfaceModem *self, GArray *bands_array, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean set_current_bands_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++
++static void load_power_state (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static MMModemPowerState load_power_state_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++static void modem_power_down (MMIfaceModem *self, GAsyncReadyCallback callback, gpointer user_data);
++static gboolean modem_power_down_finish (MMIfaceModem *self, GAsyncResult *res, GError **error);
++
++G_DEFINE_TYPE_EXTENDED (MMBroadbandModemXmmUsb, mm_broadband_modem_xmmusb, MM_TYPE_BROADBAND_MODEM, 0,
++                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
++                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP_PROFILE_MANAGER, iface_modem_3gpp_profile_manager_init))
++
++struct _MMBroadbandModemXmmUsbPrivate {
++    GArray *supported_modes;
++    GArray *supported_bands;
++    MMModemMode allowed_modes;
++};
++
++MMBroadbandModemXmmUsb *
++mm_broadband_modem_xmmusb_new (const gchar *device,
++                                const gchar *physdev,
++                                const gchar **drivers,
++                                const gchar *plugin,
++                                guint16 vendor_id,
++                                guint16 product_id)
++{
++    return g_object_new (MM_TYPE_BROADBAND_MODEM_XMMUSB,
++                          MM_BASE_MODEM_DEVICE, device,
++                          MM_BASE_MODEM_PHYSDEV, physdev,
++                          MM_BASE_MODEM_DRIVERS, drivers,
++                          MM_BASE_MODEM_PLUGIN, plugin,
++                          MM_BASE_MODEM_VENDOR_ID, vendor_id,
++                          MM_BASE_MODEM_PRODUCT_ID, product_id,
++                          MM_BASE_MODEM_DATA_NET_SUPPORTED, TRUE,
++                          MM_BASE_MODEM_DATA_TTY_SUPPORTED, FALSE,
++                          NULL);
++}
++
++/*****************************************************************************/
++/* Bearer creation */
++
++static MMBaseBearer *
++modem_create_bearer_finish (MMIfaceModem *self,
++                             GAsyncResult *res,
++                             GError **error)
++{
++    return g_task_propagate_pointer (G_TASK (res), error);
++}
++
++static void
++broadband_bearer_xmmusb_new_ready (GObject *source,
++                                    GAsyncResult *res,
++                                    GTask *task)
++{
++    MMBaseBearer *bearer = NULL;
++    GError *error = NULL;
++
++    bearer = mm_broadband_bearer_xmmusb_new_finish (res, &error);
++    if (!bearer)
++        g_task_return_error (task, error);
++    else
++        g_task_return_pointer (task, bearer, g_object_unref);
++
++    g_object_unref (task);
++}
++
++static void
++modem_create_bearer (MMIfaceModem *self,
++                      MMBearerProperties *props,
++                      GAsyncReadyCallback callback,
++                      gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++
++    mm_broadband_bearer_xmmusb_new (MM_BROADBAND_MODEM (self),
++                                     props,
++                                     NULL,
++                                     (GAsyncReadyCallback) broadband_bearer_xmmusb_new_ready,
++                                     task);
++}
++
++/*****************************************************************************/
++/* Supported capabilities - GSM_UMTS is a single MM flag covering 2G+3G
++ * together, there's no way to say "3G but not 2G" at this level. The
++ * L850-GL/L860-GL manual confirms UMTS support alongside LTE. Actual
++ * 2G exclusion happens at the MODES level below, where mm_xmm_parse_
++ * xact_test_response() filters supported modes against the bands the
++ * modem actually supports - XACT is known to lie about 2G support on
++ * 3G+4G-only hardware, which is exactly this module. */
++
++static GArray *
++load_supported_capabilities_finish (MMIfaceModem *self,
++                                     GAsyncResult *res,
++                                     GError **error)
++{
++    return g_task_propagate_pointer (G_TASK (res), error);
++}
++
++static void
++load_supported_capabilities (MMIfaceModem *self,
++                              GAsyncReadyCallback callback,
++                              gpointer user_data)
++{
++    GTask *task;
++    GArray *capabilities;
++    MMModemCapability cap = (MM_MODEM_CAPABILITY_GSM_UMTS | MM_MODEM_CAPABILITY_LTE);
++
++    task = g_task_new (self, NULL, callback, user_data);
++    capabilities = g_array_new (FALSE, FALSE, sizeof (MMModemCapability));
++    g_array_append_val (capabilities, cap);
++    g_task_return_pointer (task, capabilities, (GDestroyNotify) g_array_unref);
++    g_object_unref (task);
++}
++
++/*****************************************************************************/
++/* Supported modes/bands - AT+XACT=?, parsed with the real upstream
++ * mm_xmm_parse_xact_test_response(). Queried once and cached, same
++ * pattern as mm-shared-xmm.c. */
++
++static GArray *
++load_supported_modes_finish (MMIfaceModem *self,
++                              GAsyncResult *res,
++                              GError **error)
++{
++    if (!g_task_propagate_boolean (G_TASK (res), error))
++        return NULL;
++    g_assert (MM_BROADBAND_MODEM_XMMUSB (self)->priv->supported_modes);
++    return g_array_ref (MM_BROADBAND_MODEM_XMMUSB (self)->priv->supported_modes);
++}
++
++static GArray *
++load_supported_bands_finish (MMIfaceModem *self,
++                              GAsyncResult *res,
++                              GError **error)
++{
++    if (!g_task_propagate_boolean (G_TASK (res), error))
++        return NULL;
++    g_assert (MM_BROADBAND_MODEM_XMMUSB (self)->priv->supported_bands);
++    return g_array_ref (MM_BROADBAND_MODEM_XMMUSB (self)->priv->supported_bands);
++}
++
++static void
++xact_test_ready (MMBaseModem *self,
++                  GAsyncResult *res,
++                  GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    MMBroadbandModemXmmUsbPrivate *priv;
++
++    priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++
++    response = mm_base_modem_at_command_finish (self, res, &error);
++    if (!response ||
++        !mm_xmm_parse_xact_test_response (response,
++                                           self,
++                                           &priv->supported_modes,
++                                           &priv->supported_bands,
++                                           &error))
++        g_task_return_error (task, error);
++    else
++        g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++common_load_supported_modes_bands (GTask *task)
++{
++    mm_base_modem_at_command (MM_BASE_MODEM (g_task_get_source_object (task)),
++                               "+XACT=?",
++                               3,
++                               TRUE,
++                               (GAsyncReadyCallback) xact_test_ready,
++                               task);
++}
++
++static void
++load_supported_modes (MMIfaceModem *self,
++                       GAsyncReadyCallback callback,
++                       gpointer user_data)
++{
++    GTask *task;
++    MMBroadbandModemXmmUsbPrivate *priv;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++
++    if (!priv->supported_modes) {
++        common_load_supported_modes_bands (task);
++        return;
++    }
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++load_supported_bands (MMIfaceModem *self,
++                       GAsyncReadyCallback callback,
++                       gpointer user_data)
++{
++    GTask *task;
++    MMBroadbandModemXmmUsbPrivate *priv;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++
++    if (!priv->supported_bands) {
++        common_load_supported_modes_bands (task);
++        return;
++    }
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++/*****************************************************************************/
++/* Current modes/bands - AT+XACT?, parsed with the real upstream
++ * mm_xmm_parse_xact_query_response(). Confirmed against real hardware
++ * output:
++ *   +XACT: 4,2,1,1,2,4,5,8,101,102,103,104,105,107,108,112,113,114,
++ *          117,118,119,120,125,126,128,129,130,134,138,139,140,141,
++ *          142,143,146,148,166
++ * field[0]=4 -> allowed = 3G+4G (index 4 in xmm_modes), field[1]=2 ->
++ * preferred = 4G, field[2]=1 -> ignored, rest = band list (raw 3G,
++ * +100 for LTE) - exactly what mm_xmm_parse_xact_query_response()
++ * expects. */
++
++static gboolean
++load_current_modes_finish (MMIfaceModem *self,
++                            GAsyncResult *res,
++                            MMModemMode *allowed,
++                            MMModemMode *preferred,
++                            GError **error)
++{
++    MMModemModeCombination *result;
++
++    result = g_task_propagate_pointer (G_TASK (res), error);
++    if (!result)
++        return FALSE;
++    *allowed = result->allowed;
++    *preferred = result->preferred;
++    g_free (result);
++    return TRUE;
++}
++
++static void
++xact_query_modes_ready (MMBaseModem *self,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    MMBroadbandModemXmmUsbPrivate *priv;
++    MMModemModeCombination *result;
++
++    priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++    result = g_new0 (MMModemModeCombination, 1);
++
++    response = mm_base_modem_at_command_finish (self, res, &error);
++    if (!response || !mm_xmm_parse_xact_query_response (response, result, NULL, &error)) {
++        priv->allowed_modes = MM_MODEM_MODE_NONE;
++        g_free (result);
++        g_task_return_error (task, error);
++    } else {
++        priv->allowed_modes = result->allowed;
++        g_task_return_pointer (task, result, g_free);
++    }
++    g_object_unref (task);
++}
++
++static void
++load_current_modes (MMIfaceModem *self,
++                     GAsyncReadyCallback callback,
++                     gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               "+XACT?",
++                               3,
++                               FALSE,
++                               (GAsyncReadyCallback) xact_query_modes_ready,
++                               task);
++}
++
++static GArray *
++load_current_bands_finish (MMIfaceModem *self,
++                            GAsyncResult *res,
++                            GError **error)
++{
++    return (GArray *) g_task_propagate_pointer (G_TASK (res), error);
++}
++
++static void
++xact_query_bands_ready (MMBaseModem *self,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    GArray *result = NULL;
++
++    response = mm_base_modem_at_command_finish (self, res, &error);
++    if (!response || !mm_xmm_parse_xact_query_response (response, NULL, &result, &error))
++        g_task_return_error (task, error);
++    else
++        g_task_return_pointer (task, result, (GDestroyNotify) g_array_unref);
++    g_object_unref (task);
++}
++
++static void
++load_current_bands (MMIfaceModem *self,
++                     GAsyncReadyCallback callback,
++                     gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               "+XACT?",
++                               3,
++                               FALSE,
++                               (GAsyncReadyCallback) xact_query_bands_ready,
++                               task);
++}
++
++/*****************************************************************************/
++/* Set current modes - AT+XACT=<mode>[,<preferred>], built with the
++ * real upstream mm_xmm_build_xact_set_command(). Passing NULL for
++ * bands keeps whatever band lock is already set. */
++
++static gboolean
++set_current_modes_finish (MMIfaceModem *self,
++                           GAsyncResult *res,
++                           GError **error)
++{
++    return g_task_propagate_boolean (G_TASK (res), error);
++}
++
++static void
++xact_set_modes_ready (MMBaseModem *self,
++                       GAsyncResult *res,
++                       GTask *task)
++{
++    GError *error = NULL;
++
++    if (!mm_base_modem_at_command_finish (self, res, &error))
++        g_task_return_error (task, error);
++    else
++        g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++set_current_modes (MMIfaceModem *self,
++                    MMModemMode allowed,
++                    MMModemMode preferred,
++                    GAsyncReadyCallback callback,
++                    gpointer user_data)
++{
++    GTask *task;
++    MMModemModeCombination mode;
++    gchar *command;
++    GError *error = NULL;
++
++    task = g_task_new (self, NULL, callback, user_data);
++
++    if (allowed != MM_MODEM_MODE_ANY) {
++        mode.allowed = allowed;
++        mode.preferred = preferred;
++    } else {
++        MMBroadbandModemXmmUsbPrivate *priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++
++        mode.allowed = mm_xmm_get_modem_mode_any (priv->supported_modes);
++        mode.preferred = MM_MODEM_MODE_NONE;
++    }
++
++    command = mm_xmm_build_xact_set_command (&mode, NULL, &error);
++    if (!command) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               command,
++                               10,
++                               FALSE,
++                               (GAsyncReadyCallback) xact_set_modes_ready,
++                               task);
++    g_free (command);
++}
++
++/*****************************************************************************/
++/* Set current bands - validated against the currently allowed modes
++ * (a 3G band can't be set while only 4G is allowed, etc), same rules
++ * upstream enforces, then built with mm_xmm_build_xact_set_command(). */
++
++static gboolean
++set_current_bands_finish (MMIfaceModem *self,
++                           GAsyncResult *res,
++                           GError **error)
++{
++    return g_task_propagate_boolean (G_TASK (res), error);
++}
++
++static void
++xact_set_bands_ready (MMBaseModem *self,
++                       GAsyncResult *res,
++                       GTask *task)
++{
++    GError *error = NULL;
++
++    if (!mm_base_modem_at_command_finish (self, res, &error))
++        g_task_return_error (task, error);
++    else
++        g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static gchar *
++validate_and_build_command_set_current_bands (MMBroadbandModemXmmUsb *self,
++                                               const GArray *bands_array,
++                                               const GArray *supported_modes,
++                                               MMModemMode allowed_modes,
++                                               GError **error)
++{
++    gboolean band_3g_found = FALSE;
++    gboolean band_4g_found = FALSE;
++    GArray *unapplied_bands;
++    GError *inner_error = NULL;
++    guint i;
++
++    if (bands_array->len == 1 && g_array_index (bands_array, MMModemBand, 0) == MM_MODEM_BAND_ANY) {
++        MMModemModeCombination mode;
++
++        mode.allowed = allowed_modes;
++        mode.preferred = MM_MODEM_MODE_NONE;
++        return mm_xmm_build_xact_set_command (&mode, bands_array, error);
++    }
++
++    unapplied_bands = g_array_new (FALSE, FALSE, sizeof (MMModemBand));
++    for (i = 0; i < bands_array->len; i++) {
++        MMModemBand band = g_array_index (bands_array, MMModemBand, i);
++
++        if (mm_common_band_is_eutran (band)) {
++            band_4g_found = TRUE;
++            if (!(allowed_modes & MM_MODEM_MODE_4G))
++                g_array_append_val (unapplied_bands, band);
++        }
++        if (mm_common_band_is_utran (band)) {
++            band_3g_found = TRUE;
++            if (!(allowed_modes & MM_MODEM_MODE_3G))
++                g_array_append_val (unapplied_bands, band);
++        }
++    }
++
++    if ((allowed_modes & MM_MODEM_MODE_3G) && !band_3g_found) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
++                                    "At least one UTRAN band is required when 3G mode is allowed");
++        goto out;
++    }
++    if ((allowed_modes & MM_MODEM_MODE_4G) && !band_4g_found) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
++                                    "At least one E-UTRAN band is required when 4G mode is allowed");
++        goto out;
++    }
++    if (unapplied_bands->len > 0) {
++        gchar *str = mm_common_build_bands_string ((const MMModemBand *) (gconstpointer) unapplied_bands->data,
++                                                     unapplied_bands->len);
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
++                                    "Cannot update bands for modes not currently allowed: %s", str);
++        g_free (str);
++        goto out;
++    }
++
++out:
++    g_array_unref (unapplied_bands);
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return NULL;
++    }
++    return mm_xmm_build_xact_set_command (NULL, bands_array, error);
++}
++
++static void
++set_current_bands (MMIfaceModem *self,
++                    GArray *bands_array,
++                    GAsyncReadyCallback callback,
++                    gpointer user_data)
++{
++    GTask *task;
++    gchar *command = NULL;
++    GError *error = NULL;
++    MMBroadbandModemXmmUsbPrivate *priv;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    priv = MM_BROADBAND_MODEM_XMMUSB (self)->priv;
++
++    if (priv->allowed_modes == MM_MODEM_MODE_NONE) {
++        error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                              "Cannot set bands if allowed modes are unknown");
++    } else {
++        command = validate_and_build_command_set_current_bands (MM_BROADBAND_MODEM_XMMUSB (self),
++                                                                  bands_array,
++                                                                  priv->supported_modes,
++                                                                  priv->allowed_modes,
++                                                                  &error);
++    }
++
++    if (!command) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               command,
++                               10,
++                               FALSE,
++                               (GAsyncReadyCallback) xact_set_bands_ready,
++                               task);
++    g_free (command);
++}
++
++/*****************************************************************************/
++/* Power state - AT+CFUN
++ *
++ * MMBroadbandModem's generic implementation only provides a default
++ * modem_power_up (AT+CFUN=1, fire-and-forget); it does NOT provide
++ * modem_power_down. Without an explicit override here, any MM flow
++ * that needs to power the modem down first - most notably updating
++ * the initial EPS bearer settings when the configured APN differs
++ * from what's already active - fails immediately with "Requested
++ * power transition is not supported by this modem", without ever
++ * sending an AT command. The L860 AT command manual confirms
++ * AT+CFUN=4 (flight mode) is supported, so implement it explicitly. */
++
++static MMModemPowerState
++load_power_state_finish (MMIfaceModem *self,
++                          GAsyncResult *res,
++                          GError **error)
++{
++    GError *inner_error = NULL;
++    gssize value;
++
++    value = g_task_propagate_int (G_TASK (res), &inner_error);
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return MM_MODEM_POWER_STATE_UNKNOWN;
++    }
++    return (MMModemPowerState) value;
++}
++
++static void
++load_power_state_ready (MMBaseModem *self,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    const gchar *response;
++    GError *error = NULL;
++    guint fun;
++    MMModemPowerState state;
++
++    response = mm_base_modem_at_command_finish (self, res, &error);
++    if (!response) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    if (!mm_3gpp_parse_cfun_query_response (response, &fun, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    switch (fun) {
++        case 1:
++            state = MM_MODEM_POWER_STATE_ON;
++            break;
++        case 4:
++            state = MM_MODEM_POWER_STATE_LOW;
++            break;
++        case 0:
++            state = MM_MODEM_POWER_STATE_OFF;
++            break;
++        default:
++            state = MM_MODEM_POWER_STATE_UNKNOWN;
++            break;
++    }
++
++    g_task_return_int (task, (gssize) state);
++    g_object_unref (task);
++}
++
++static void
++load_power_state (MMIfaceModem *self,
++                   GAsyncReadyCallback callback,
++                   gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               "+CFUN?",
++                               3,
++                               FALSE,
++                               (GAsyncReadyCallback) load_power_state_ready,
++                               task);
++}
++
++static gboolean
++modem_power_down_finish (MMIfaceModem *self,
++                          GAsyncResult *res,
++                          GError **error)
++{
++    return g_task_propagate_boolean (G_TASK (res), error);
++}
++
++static void
++modem_power_down_ready (MMBaseModem *self,
++                         GAsyncResult *res,
++                         GTask *task)
++{
++    GError *error = NULL;
++
++    if (!mm_base_modem_at_command_finish (self, res, &error)) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++modem_power_down (MMIfaceModem *self,
++                   GAsyncReadyCallback callback,
++                   gpointer user_data)
++{
++    GTask *task;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               "+CFUN=4",
++                               5,
++                               FALSE,
++                               (GAsyncReadyCallback) modem_power_down_ready,
++                               task);
++}
++
++/*****************************************************************************/
++/* 3GPP profile manager - check_format override
++ *
++ * The generic MMBroadbandModem implementation queries AT+CGDCONT=?
++ * and uses whatever cid range it reports verbatim. On this L860-GL
++ * that range includes cid 0, but AT+CGACT=1,0 fails with CME error
++ * 500 on real hardware - cid 0 is reported as valid but isn't usable.
++ * Reuse the exact same AT+CGDCONT=? query/parse the generic code does
++ * (mm_3gpp_parse_cgdcont_test_response +
++ * mm_3gpp_pdp_context_format_list_find_range are both public core
++ * helpers), just clamp the minimum to 1 afterwards. Without this,
++ * MM ends up picking cid=0 for the bearer's dial_3gpp/CGACT, which is
++ * exactly the "Unknown mobile equipment error: 500" seen on connect. */
++
++typedef struct {
++    MMBearerIpFamily ip_type;
++    gint             min_profile_id;
++    gint             max_profile_id;
++} CheckFormatContext;
++
++static void
++check_format_context_free (CheckFormatContext *ctx)
++{
++    g_slice_free (CheckFormatContext, ctx);
++}
++
++static gboolean
++modem_3gpp_profile_manager_check_format_finish (MMIfaceModem3gppProfileManager *self,
++                                                 GAsyncResult *res,
++                                                 gboolean *new_id,
++                                                 gint *min_profile_id,
++                                                 gint *max_profile_id,
++                                                 GEqualFunc *apn_cmp,
++                                                 MM3gppProfileCmpFlags *profile_cmp_flags,
++                                                 GError **error)
++{
++    CheckFormatContext *ctx;
++
++    if (!g_task_propagate_boolean (G_TASK (res), error))
++        return FALSE;
++
++    ctx = g_task_get_task_data (G_TASK (res));
++    if (new_id)
++        *new_id = TRUE;
++    if (min_profile_id)
++        *min_profile_id = ctx->min_profile_id;
++    if (max_profile_id)
++        *max_profile_id = ctx->max_profile_id;
++    if (apn_cmp)
++        *apn_cmp = (GEqualFunc) mm_3gpp_cmp_apn_name;
++    if (profile_cmp_flags)
++        *profile_cmp_flags = (MM_3GPP_PROFILE_CMP_FLAGS_NO_AUTH |
++                              MM_3GPP_PROFILE_CMP_FLAGS_NO_APN_TYPE |
++                              MM_3GPP_PROFILE_CMP_FLAGS_NO_ACCESS_TYPE_PREFERENCE |
++                              MM_3GPP_PROFILE_CMP_FLAGS_NO_ROAMING_ALLOWANCE |
++                              MM_3GPP_PROFILE_CMP_FLAGS_NO_PROFILE_SOURCE);
++    return TRUE;
++}
++
++static void
++check_format_cgdcont_test_ready (MMBaseModem *self,
++                                  GAsyncResult *res,
++                                  GTask *task)
++{
++    CheckFormatContext *ctx;
++    const gchar *response;
++    GList *format_list = NULL;
++    GError *error = NULL;
++
++    ctx = g_task_get_task_data (task);
++
++    response = mm_base_modem_at_command_finish (self, res, &error);
++    if (!response) {
++        g_error_free (error);
++    } else {
++        format_list = mm_3gpp_parse_cgdcont_test_response (response, self, &error);
++        if (error) {
++            g_error_free (error);
++        } else if (!mm_3gpp_pdp_context_format_list_find_range (format_list, ctx->ip_type,
++                                                                 &ctx->min_profile_id, &ctx->max_profile_id)) {
++            ctx->min_profile_id = 1;
++            ctx->max_profile_id = G_MAXINT - 1;
++        }
++    }
++
++    if (format_list)
++        mm_3gpp_pdp_context_format_list_free (format_list);
++
++    /* Clamp: cid 0 is reported as valid by AT+CGDCONT=? on this modem
++     * but AT+CGACT=1,0 fails with CME error 500 on real hardware. */
++    if (ctx->min_profile_id < 1)
++        ctx->min_profile_id = 1;
++    if (ctx->max_profile_id < ctx->min_profile_id)
++        ctx->max_profile_id = G_MAXINT - 1;
++
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++modem_3gpp_profile_manager_check_format (MMIfaceModem3gppProfileManager *self,
++                                          MMBearerIpFamily ip_type,
++                                          GAsyncReadyCallback callback,
++                                          gpointer user_data)
++{
++    GTask *task;
++    CheckFormatContext *ctx;
++
++    task = g_task_new (self, NULL, callback, user_data);
++    ctx = g_slice_new0 (CheckFormatContext);
++    ctx->ip_type = ip_type;
++    ctx->min_profile_id = 1;
++    ctx->max_profile_id = G_MAXINT - 1;
++    g_task_set_task_data (task, ctx, (GDestroyNotify) check_format_context_free);
++
++    mm_base_modem_at_command (MM_BASE_MODEM (self),
++                               "+CGDCONT=?",
++                               3,
++                               TRUE,
++                               (GAsyncReadyCallback) check_format_cgdcont_test_ready,
++                               task);
++}
++
++static void
++iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface)
++{
++    iface->check_format = modem_3gpp_profile_manager_check_format;
++    iface->check_format_finish = modem_3gpp_profile_manager_check_format_finish;
++}
++
++/*****************************************************************************/
++
++static void
++iface_modem_init (MMIfaceModemInterface *iface)
++{
++    iface->create_bearer = modem_create_bearer;
++    iface->create_bearer_finish = modem_create_bearer_finish;
++    iface->load_supported_capabilities = load_supported_capabilities;
++    iface->load_supported_capabilities_finish = load_supported_capabilities_finish;
++    iface->load_supported_modes = load_supported_modes;
++    iface->load_supported_modes_finish = load_supported_modes_finish;
++    iface->load_supported_bands = load_supported_bands;
++    iface->load_supported_bands_finish = load_supported_bands_finish;
++    iface->load_current_modes = load_current_modes;
++    iface->load_current_modes_finish = load_current_modes_finish;
++    iface->load_current_bands = load_current_bands;
++    iface->load_current_bands_finish = load_current_bands_finish;
++    iface->set_current_modes = set_current_modes;
++    iface->set_current_modes_finish = set_current_modes_finish;
++    iface->set_current_bands = set_current_bands;
++    iface->set_current_bands_finish = set_current_bands_finish;
++    iface->load_power_state = load_power_state;
++    iface->load_power_state_finish = load_power_state_finish;
++    iface->modem_power_down = modem_power_down;
++    iface->modem_power_down_finish = modem_power_down_finish;
++    iface->setup_charset = NULL;
++    iface->setup_charset_finish = NULL;
++}
++
++static void
++mm_broadband_modem_xmmusb_init (MMBroadbandModemXmmUsb *self)
++{
++    self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self,
++                                               MM_TYPE_BROADBAND_MODEM_XMMUSB,
++                                               MMBroadbandModemXmmUsbPrivate);
++}
++
++static void
++finalize (GObject *object)
++{
++    MMBroadbandModemXmmUsbPrivate *priv = MM_BROADBAND_MODEM_XMMUSB (object)->priv;
++
++    if (priv->supported_modes)
++        g_array_unref (priv->supported_modes);
++    if (priv->supported_bands)
++        g_array_unref (priv->supported_bands);
++
++    G_OBJECT_CLASS (mm_broadband_modem_xmmusb_parent_class)->finalize (object);
++}
++
++static void
++mm_broadband_modem_xmmusb_class_init (MMBroadbandModemXmmUsbClass *klass)
++{
++    GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++    g_type_class_add_private (klass, sizeof (MMBroadbandModemXmmUsbPrivate));
++    object_class->finalize = finalize;
++}
+diff --git a/src/plugins/xmmusb/mm-broadband-modem-xmmusb.h b/src/plugins/xmmusb/mm-broadband-modem-xmmusb.h
+new file mode 100644
+index 0000000..fbc7953
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-broadband-modem-xmmusb.h
+@@ -0,0 +1,36 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++#ifndef MM_BROADBAND_MODEM_XMMUSB_H
++#define MM_BROADBAND_MODEM_XMMUSB_H
++
++#include "mm-broadband-modem.h"
++
++#define MM_TYPE_BROADBAND_MODEM_XMMUSB            (mm_broadband_modem_xmmusb_get_type ())
++#define MM_BROADBAND_MODEM_XMMUSB(obj)             (G_TYPE_CHECK_INSTANCE_CAST ((obj), MM_TYPE_BROADBAND_MODEM_XMMUSB, MMBroadbandModemXmmUsb))
++#define MM_BROADBAND_MODEM_XMMUSB_CLASS(klass)     (G_TYPE_CHECK_CLASS_CAST ((klass),  MM_TYPE_BROADBAND_MODEM_XMMUSB, MMBroadbandModemXmmUsbClass))
++#define MM_IS_BROADBAND_MODEM_XMMUSB(obj)          (G_TYPE_CHECK_INSTANCE_TYPE ((obj), MM_TYPE_BROADBAND_MODEM_XMMUSB))
++#define MM_IS_BROADBAND_MODEM_XMMUSB_CLASS(klass)  (G_TYPE_CHECK_CLASS_TYPE ((klass),  MM_TYPE_BROADBAND_MODEM_XMMUSB))
++#define MM_BROADBAND_MODEM_XMMUSB_GET_CLASS(obj)   (G_TYPE_INSTANCE_GET_CLASS ((obj),  MM_TYPE_BROADBAND_MODEM_XMMUSB, MMBroadbandModemXmmUsbClass))
++
++typedef struct _MMBroadbandModemXmmUsb MMBroadbandModemXmmUsb;
++typedef struct _MMBroadbandModemXmmUsbClass MMBroadbandModemXmmUsbClass;
++typedef struct _MMBroadbandModemXmmUsbPrivate MMBroadbandModemXmmUsbPrivate;
++
++struct _MMBroadbandModemXmmUsb {
++    MMBroadbandModem parent;
++    MMBroadbandModemXmmUsbPrivate *priv;
++};
++
++struct _MMBroadbandModemXmmUsbClass {
++    MMBroadbandModemClass parent;
++};
++
++GType mm_broadband_modem_xmmusb_get_type (void);
++
++MMBroadbandModemXmmUsb *mm_broadband_modem_xmmusb_new (const gchar *device,
++                                                        const gchar *physdev,
++                                                        const gchar **drivers,
++                                                        const gchar *plugin,
++                                                        guint16 vendor_id,
++                                                        guint16 product_id);
++
++#endif /* MM_BROADBAND_MODEM_XMMUSB_H */
+diff --git a/src/plugins/xmmusb/mm-modem-helpers-xmm.c b/src/plugins/xmmusb/mm-modem-helpers-xmm.c
+new file mode 100644
+index 0000000..67bc9cc
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-modem-helpers-xmm.c
+@@ -0,0 +1,1006 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details:
++ *
++ * Copyright (C) 2018 Aleksander Morgado <aleksander@aleksander.es>
++ */
++
++#include <string.h>
++
++#include "mm-log.h"
++#include "mm-modem-helpers.h"
++#include "mm-modem-helpers-xmm.h"
++#include "mm-signal.h"
++
++/*****************************************************************************/
++/* XACT common config */
++
++typedef struct {
++    guint       num;
++    MMModemBand band;
++} XactBandConfig;
++
++static const XactBandConfig xact_band_config[] = {
++    /* GSM bands */
++    { .num =  900, .band = MM_MODEM_BAND_EGSM },
++    { .num = 1800, .band = MM_MODEM_BAND_DCS  },
++    { .num = 1900, .band = MM_MODEM_BAND_PCS  },
++    { .num =  850, .band = MM_MODEM_BAND_G850 },
++    { .num =  450, .band = MM_MODEM_BAND_G450 },
++    { .num =  480, .band = MM_MODEM_BAND_G480 },
++    { .num =  750, .band = MM_MODEM_BAND_G750 },
++    { .num =  380, .band = MM_MODEM_BAND_G380 },
++    { .num =  410, .band = MM_MODEM_BAND_G410 },
++    { .num =  710, .band = MM_MODEM_BAND_G710 },
++    { .num =  810, .band = MM_MODEM_BAND_G810 },
++    /* UMTS bands */
++    { .num =    1, .band = MM_MODEM_BAND_UTRAN_1  },
++    { .num =    2, .band = MM_MODEM_BAND_UTRAN_2  },
++    { .num =    3, .band = MM_MODEM_BAND_UTRAN_3  },
++    { .num =    4, .band = MM_MODEM_BAND_UTRAN_4  },
++    { .num =    5, .band = MM_MODEM_BAND_UTRAN_5  },
++    { .num =    6, .band = MM_MODEM_BAND_UTRAN_6  },
++    { .num =    7, .band = MM_MODEM_BAND_UTRAN_7  },
++    { .num =    8, .band = MM_MODEM_BAND_UTRAN_8  },
++    { .num =    9, .band = MM_MODEM_BAND_UTRAN_9  },
++    { .num =   10, .band = MM_MODEM_BAND_UTRAN_10 },
++    { .num =   11, .band = MM_MODEM_BAND_UTRAN_11 },
++    { .num =   12, .band = MM_MODEM_BAND_UTRAN_12 },
++    { .num =   13, .band = MM_MODEM_BAND_UTRAN_13 },
++    { .num =   14, .band = MM_MODEM_BAND_UTRAN_14 },
++    { .num =   19, .band = MM_MODEM_BAND_UTRAN_19 },
++    { .num =   20, .band = MM_MODEM_BAND_UTRAN_20 },
++    { .num =   21, .band = MM_MODEM_BAND_UTRAN_21 },
++    { .num =   22, .band = MM_MODEM_BAND_UTRAN_22 },
++    { .num =   25, .band = MM_MODEM_BAND_UTRAN_25 },
++    /* LTE bands */
++    { .num =  101, .band = MM_MODEM_BAND_EUTRAN_1  },
++    { .num =  102, .band = MM_MODEM_BAND_EUTRAN_2  },
++    { .num =  103, .band = MM_MODEM_BAND_EUTRAN_3  },
++    { .num =  104, .band = MM_MODEM_BAND_EUTRAN_4  },
++    { .num =  105, .band = MM_MODEM_BAND_EUTRAN_5  },
++    { .num =  106, .band = MM_MODEM_BAND_EUTRAN_6  },
++    { .num =  107, .band = MM_MODEM_BAND_EUTRAN_7  },
++    { .num =  108, .band = MM_MODEM_BAND_EUTRAN_8  },
++    { .num =  109, .band = MM_MODEM_BAND_EUTRAN_9  },
++    { .num =  110, .band = MM_MODEM_BAND_EUTRAN_10 },
++    { .num =  111, .band = MM_MODEM_BAND_EUTRAN_11 },
++    { .num =  112, .band = MM_MODEM_BAND_EUTRAN_12 },
++    { .num =  113, .band = MM_MODEM_BAND_EUTRAN_13 },
++    { .num =  114, .band = MM_MODEM_BAND_EUTRAN_14 },
++    { .num =  117, .band = MM_MODEM_BAND_EUTRAN_17 },
++    { .num =  118, .band = MM_MODEM_BAND_EUTRAN_18 },
++    { .num =  119, .band = MM_MODEM_BAND_EUTRAN_19 },
++    { .num =  120, .band = MM_MODEM_BAND_EUTRAN_20 },
++    { .num =  121, .band = MM_MODEM_BAND_EUTRAN_21 },
++    { .num =  122, .band = MM_MODEM_BAND_EUTRAN_22 },
++    { .num =  123, .band = MM_MODEM_BAND_EUTRAN_23 },
++    { .num =  124, .band = MM_MODEM_BAND_EUTRAN_24 },
++    { .num =  125, .band = MM_MODEM_BAND_EUTRAN_25 },
++    { .num =  126, .band = MM_MODEM_BAND_EUTRAN_26 },
++    { .num =  127, .band = MM_MODEM_BAND_EUTRAN_27 },
++    { .num =  128, .band = MM_MODEM_BAND_EUTRAN_28 },
++    { .num =  129, .band = MM_MODEM_BAND_EUTRAN_29 },
++    { .num =  130, .band = MM_MODEM_BAND_EUTRAN_30 },
++    { .num =  131, .band = MM_MODEM_BAND_EUTRAN_31 },
++    { .num =  132, .band = MM_MODEM_BAND_EUTRAN_32 },
++    { .num =  133, .band = MM_MODEM_BAND_EUTRAN_33 },
++    { .num =  134, .band = MM_MODEM_BAND_EUTRAN_34 },
++    { .num =  135, .band = MM_MODEM_BAND_EUTRAN_35 },
++    { .num =  136, .band = MM_MODEM_BAND_EUTRAN_36 },
++    { .num =  137, .band = MM_MODEM_BAND_EUTRAN_37 },
++    { .num =  138, .band = MM_MODEM_BAND_EUTRAN_38 },
++    { .num =  139, .band = MM_MODEM_BAND_EUTRAN_39 },
++    { .num =  140, .band = MM_MODEM_BAND_EUTRAN_40 },
++    { .num =  141, .band = MM_MODEM_BAND_EUTRAN_41 },
++    { .num =  142, .band = MM_MODEM_BAND_EUTRAN_42 },
++    { .num =  143, .band = MM_MODEM_BAND_EUTRAN_43 },
++    { .num =  144, .band = MM_MODEM_BAND_EUTRAN_44 },
++    { .num =  145, .band = MM_MODEM_BAND_EUTRAN_45 },
++    { .num =  146, .band = MM_MODEM_BAND_EUTRAN_46 },
++    { .num =  147, .band = MM_MODEM_BAND_EUTRAN_47 },
++    { .num =  148, .band = MM_MODEM_BAND_EUTRAN_48 },
++    { .num =  149, .band = MM_MODEM_BAND_EUTRAN_49 },
++    { .num =  150, .band = MM_MODEM_BAND_EUTRAN_50 },
++    { .num =  151, .band = MM_MODEM_BAND_EUTRAN_51 },
++    { .num =  152, .band = MM_MODEM_BAND_EUTRAN_52 },
++    { .num =  153, .band = MM_MODEM_BAND_EUTRAN_53 },
++    { .num =  154, .band = MM_MODEM_BAND_EUTRAN_54 },
++    { .num =  155, .band = MM_MODEM_BAND_EUTRAN_55 },
++    { .num =  156, .band = MM_MODEM_BAND_EUTRAN_56 },
++    { .num =  157, .band = MM_MODEM_BAND_EUTRAN_57 },
++    { .num =  158, .band = MM_MODEM_BAND_EUTRAN_58 },
++    { .num =  159, .band = MM_MODEM_BAND_EUTRAN_59 },
++    { .num =  160, .band = MM_MODEM_BAND_EUTRAN_60 },
++    { .num =  161, .band = MM_MODEM_BAND_EUTRAN_61 },
++    { .num =  162, .band = MM_MODEM_BAND_EUTRAN_62 },
++    { .num =  163, .band = MM_MODEM_BAND_EUTRAN_63 },
++    { .num =  164, .band = MM_MODEM_BAND_EUTRAN_64 },
++    { .num =  165, .band = MM_MODEM_BAND_EUTRAN_65 },
++    { .num =  166, .band = MM_MODEM_BAND_EUTRAN_66 },
++};
++
++#define XACT_NUM_IS_BAND_2G(num) (num > 300)
++#define XACT_NUM_IS_BAND_3G(num) (num < 100)
++#define XACT_NUM_IS_BAND_4G(num) (num > 100 && num < 300)
++
++static MMModemBand
++xact_num_to_band (guint num)
++{
++    guint i;
++
++    for (i = 0; i < G_N_ELEMENTS (xact_band_config); i++) {
++        if (num == xact_band_config[i].num)
++            return xact_band_config[i].band;
++    }
++    return MM_MODEM_BAND_UNKNOWN;
++}
++
++static guint
++xact_band_to_num (MMModemBand band)
++{
++    guint i;
++
++    for (i = 0; i < G_N_ELEMENTS (xact_band_config); i++) {
++        if (band == xact_band_config[i].band)
++            return xact_band_config[i].num;
++    }
++    return 0;
++}
++
++/*****************************************************************************/
++/* XACT=? response parser */
++
++/* Index of the array is the XMM-specific value */
++static const MMModemMode xmm_modes[] = {
++    ( MM_MODEM_MODE_2G ),
++    (                    MM_MODEM_MODE_3G ),
++    (                                       MM_MODEM_MODE_4G ),
++    ( MM_MODEM_MODE_2G | MM_MODEM_MODE_3G ),
++    (                    MM_MODEM_MODE_3G | MM_MODEM_MODE_4G ),
++    ( MM_MODEM_MODE_2G |                    MM_MODEM_MODE_4G ),
++    ( MM_MODEM_MODE_2G | MM_MODEM_MODE_3G | MM_MODEM_MODE_4G ),
++};
++
++gboolean
++mm_xmm_parse_xact_test_response (const gchar  *response,
++                                 gpointer      log_object,
++                                 GArray      **modes_out,
++                                 GArray      **bands_out,
++                                 GError      **error)
++{
++    GError  *inner_error = NULL;
++    GArray  *modes = NULL;
++    GArray  *all_modes = NULL;
++    GArray  *filtered = NULL;
++    GArray  *supported = NULL;
++    GArray  *preferred = NULL;
++    GArray  *bands = NULL;
++    gchar  **split = NULL;
++    guint    i;
++
++    MMModemModeCombination all = {
++        .allowed   = MM_MODEM_MODE_NONE,
++        .preferred = MM_MODEM_MODE_NONE
++    };
++
++    g_assert (modes_out && bands_out);
++
++    /*
++     * AT+XACT=?
++     * +XACT: (0-6),(0-2),0,1,2,4,5,8,101,102,103,104,105,107,108,111,...
++     */
++    response = mm_strip_tag (response, "+XACT:");
++    split = mm_split_string_groups (response);
++
++    if (g_strv_length (split) < 3) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Missing fields");
++        goto out;
++    }
++
++    /* First group is list of supported modes */
++    supported = mm_parse_uint_list (split[0], &inner_error);
++    if (inner_error)
++        goto out;
++    if (!supported) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Missing modes");
++        goto out;
++    }
++
++    /* Second group is list of possible preferred modes.
++     * For our purposes, the preferred list may be empty */
++    preferred = mm_parse_uint_list (split[1], &inner_error);
++    if (inner_error)
++        goto out;
++
++    /* Build array of modes */
++    modes = g_array_new (FALSE, FALSE, sizeof (MMModemModeCombination));
++
++    for (i = 0; i < supported->len; i++) {
++        guint                  supported_value;
++        MMModemModeCombination combination;
++        guint                  j;
++
++        supported_value = g_array_index (supported, guint, i);
++
++        if (supported_value >= G_N_ELEMENTS (xmm_modes)) {
++            mm_obj_warn (log_object, "unexpected AcT supported value: %u", supported_value);
++            continue;
++        }
++
++        /* Combination without any preferred */
++        combination.allowed = xmm_modes[supported_value];
++        combination.preferred = MM_MODEM_MODE_NONE;
++        g_array_append_val (modes, combination);
++
++        if (mm_count_bits_set (combination.allowed) == 1)
++            continue;
++
++        if (!preferred)
++            continue;
++
++        for (j = 0; j < preferred->len; j++) {
++            guint preferred_value;
++
++            preferred_value = g_array_index (preferred, guint, j);
++            if (preferred_value >= G_N_ELEMENTS (xmm_modes)) {
++                mm_obj_warn (log_object, "unexpected AcT preferred value: %u", preferred_value);
++                continue;
++            }
++            combination.preferred = xmm_modes[preferred_value];
++            if (mm_count_bits_set (combination.preferred) != 1) {
++                mm_obj_warn (log_object, "AcT preferred value should be a single AcT: %u", preferred_value);
++                continue;
++            }
++            if (!(combination.allowed & combination.preferred))
++                continue;
++            g_array_append_val (modes, combination);
++        }
++    }
++
++    if (modes->len == 0) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                   "No modes list built from +XACT=? response");
++        goto out;
++    }
++
++    /* Build array of bands */
++    bands = g_array_new (FALSE, FALSE, sizeof (MMModemBand));
++
++    /*
++     * The next element at index 2 may be '0'. We will just treat that field as
++     * any other band field as '0' isn't a supported band, we'll just ignore it.
++     */
++    for (i = 2; split[i]; i++) {
++        MMModemBand band;
++        guint       num;
++
++        if (!mm_get_uint_from_str (split[i], &num)) {
++            mm_obj_warn (log_object, "unexpected band value: %s", split[i]);
++            continue;
++        }
++
++        if (num == 0)
++            continue;
++
++        band = xact_num_to_band (num);
++        if (band == MM_MODEM_BAND_UNKNOWN) {
++            mm_obj_warn (log_object, "unsupported band value: %s", split[i]);
++            continue;
++        }
++
++        g_array_append_val (bands, band);
++
++        if (XACT_NUM_IS_BAND_2G (num))
++            all.allowed |= MM_MODEM_MODE_2G;
++        if (XACT_NUM_IS_BAND_3G (num))
++            all.allowed |= MM_MODEM_MODE_3G;
++        if (XACT_NUM_IS_BAND_4G (num))
++            all.allowed |= MM_MODEM_MODE_4G;
++    }
++
++    if (bands->len == 0) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                   "No bands list built from +XACT=? response");
++        goto out;
++    }
++
++    /* AT+XACT lies about the supported modes, e.g. it may report 2G supported
++     * for 3G+4G only devices. So, filter out unsupported modes based on the
++     * supported bands */
++    all_modes = g_array_sized_new (FALSE, FALSE, sizeof (MMModemModeCombination), 1);
++    g_array_append_val (all_modes, all);
++
++    filtered = mm_filter_supported_modes (all_modes, modes, log_object);
++    if (!filtered || filtered->len == 0) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                   "Empty supported mode list after frequency band filtering");
++        goto out;
++    }
++
++    /* success */
++
++out:
++    if (modes)
++        g_array_unref (modes);
++    if (all_modes)
++        g_array_unref (all_modes);
++    if (supported)
++        g_array_unref (supported);
++    if (preferred)
++        g_array_unref (preferred);
++    g_strfreev (split);
++
++    if (inner_error) {
++        if (filtered)
++            g_array_unref (filtered);
++        if (bands)
++            g_array_unref (bands);
++        g_propagate_error (error, inner_error);
++        return FALSE;
++    }
++
++    g_assert (filtered);
++    *modes_out = filtered;
++    g_assert (bands);
++    *bands_out = bands;
++    return TRUE;
++}
++
++/*****************************************************************************/
++/* AT+XACT? response parser */
++
++gboolean
++mm_xmm_parse_xact_query_response (const gchar             *response,
++                                  MMModemModeCombination  *mode_out,
++                                  GArray                 **bands_out,
++                                  GError                 **error)
++{
++    g_autoptr(GRegex)      r = NULL;
++    g_autoptr(GMatchInfo)  match_info = NULL;
++    g_autoptr(GArray)      bands = NULL;
++    GError                *inner_error = NULL;
++    guint                  i;
++    MMModemModeCombination mode = {
++        .allowed   = MM_MODEM_MODE_NONE,
++        .preferred = MM_MODEM_MODE_NONE,
++    };
++
++    /* At least one */
++    g_assert (mode_out || bands_out);
++
++    /*
++     * AT+XACT?
++     * +XACT: 4,1,2,1,2,4,5,8,101,102,103,104,105,107,108,111,...
++     *
++     * Note: the first 3 fields corresponde to allowed and preferred modes. Only the
++     * first one of those 3 first fields is mandatory, the other two may be empty.
++     */
++    r = g_regex_new ("\\+XACT: (\\d+),([^,]*),([^,]*),(.*)(?:\\r\\n)?",
++                     G_REGEX_DOLLAR_ENDONLY | G_REGEX_RAW, 0, NULL);
++    g_assert (r != NULL);
++
++    g_regex_match_full (r, response, strlen (response), 0, 0, &match_info, &inner_error);
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return FALSE;
++    }
++
++    if (!g_match_info_matches (match_info)) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Unsupported XACT? response: %s", response);
++        return FALSE;
++    }
++
++    if (mode_out) {
++        guint xmm_mode;
++
++        /* Number at index 1 */
++        mm_get_uint_from_match_info (match_info, 1, &xmm_mode);
++        if (xmm_mode >= G_N_ELEMENTS (xmm_modes)) {
++            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                         "Unsupported XACT AcT value: %u", xmm_mode);
++            return FALSE;
++        }
++        mode.allowed = xmm_modes[xmm_mode];
++
++        /* Number at index 2 */
++        if (mm_count_bits_set (mode.allowed) > 1 && mm_get_uint_from_match_info (match_info, 2, &xmm_mode)) {
++            if (xmm_mode >= G_N_ELEMENTS (xmm_modes)) {
++                g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                             "Unsupported XACT preferred AcT value: %u", xmm_mode);
++                return FALSE;
++            }
++            mode.preferred = xmm_modes[xmm_mode];
++        }
++
++        /* Number at index 3: ignored */
++    }
++
++    if (bands_out) {
++        g_autofree gchar *bandstr = NULL;
++        g_autoptr(GArray) nums = NULL;
++
++        /* Bands start at index 4 */
++        bandstr = mm_get_string_unquoted_from_match_info (match_info, 4);
++        nums = mm_parse_uint_list (bandstr, &inner_error);
++        if (inner_error) {
++            g_propagate_error (error, inner_error);
++            return FALSE;
++        }
++        if (!nums) {
++            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                         "Missing bands in XACT? response: %s", response);
++            return FALSE;
++        }
++
++        bands = g_array_sized_new (FALSE, FALSE, sizeof (MMModemBand), nums->len);
++        for (i = 0; i < nums->len; i++) {
++            MMModemBand band;
++
++            band = xact_num_to_band (g_array_index (nums, guint, i));
++            if (band != MM_MODEM_BAND_UNKNOWN)
++                g_array_append_val (bands, band);
++        }
++
++        if (bands->len == 0) {
++            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                         "Invalid list of bands in XACT? response: %s", response);
++            return FALSE;
++        }
++    }
++
++    /* success */
++
++    if (mode_out) {
++        g_assert (mode.allowed != MM_MODEM_MODE_NONE);
++        mode_out->allowed = mode.allowed;
++        mode_out->preferred = mode.preferred;
++    }
++
++    if (bands_out) {
++        g_assert (bands);
++        *bands_out = g_steal_pointer (&bands);
++    }
++
++    return TRUE;
++}
++
++/*****************************************************************************/
++/* AT+XACT=X command builder */
++
++static gboolean
++append_rat_value (GString      *str,
++                  MMModemMode   mode,
++                  GError      **error)
++{
++    guint i;
++
++    for (i = 0; i < G_N_ELEMENTS (xmm_modes); i++) {
++        if (xmm_modes[i] == mode) {
++            g_string_append_printf (str, "%u", i);
++            return TRUE;
++        }
++    }
++
++    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                 "No AcT value matches requested mode");
++    return FALSE;
++}
++
++gchar *
++mm_xmm_build_xact_set_command (const MMModemModeCombination  *mode,
++                               const GArray                  *bands,
++                               GError                       **error)
++{
++    GString *command;
++
++    /* At least one required */
++    g_assert (mode || bands);
++
++    /* Build command */
++    command = g_string_new ("+XACT=");
++
++    /* Mode is optional. If not given, we set all fields as empty */
++    if (mode) {
++        /* Allowed mask */
++        if (!append_rat_value (command, mode->allowed, error)) {
++            g_string_free (command, TRUE);
++            return NULL;
++        }
++
++        /* Preferred */
++        if (mode->preferred != MM_MODEM_MODE_NONE) {
++            g_string_append (command, ",");
++            if (!append_rat_value (command, mode->preferred, error)) {
++                g_string_free (command, TRUE);
++                return NULL;
++            }
++            /* We never set <PreferredAct2> because that is anyway not part of
++             * ModemManager's API. In modems with triple GSM/UMTS/LTE mode, the
++             * <PreferredAct2> is always the highest of the remaining ones. E.g.
++             * if "2G+3G+4G allowed with 2G preferred", the second preferred one
++             * would be 4G, not 3G. */
++            g_string_append (command, ",");
++        } else
++            g_string_append (command, ",,");
++    } else
++        g_string_append (command, ",,");
++
++    if (bands) {
++        g_string_append (command, ",");
++        /* Automatic band selection */
++        if (bands->len == 1 && g_array_index (bands, MMModemBand, 0) == MM_MODEM_BAND_ANY)
++            g_string_append (command, "0");
++        else {
++            guint i;
++
++            for (i = 0; i < bands->len; i++) {
++                MMModemBand band;
++                guint       num;
++
++                band = g_array_index (bands, MMModemBand, i);
++                num = xact_band_to_num (band);
++                if (!num) {
++                    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
++                                 "Band unsupported by this plugin: %s", mm_modem_band_get_string (band));
++                    g_string_free (command, TRUE);
++                    return NULL;
++                }
++
++                g_string_append_printf (command, "%s%u", i == 0 ? "" : ",", num);
++            }
++        }
++    }
++
++    return g_string_free (command, FALSE);
++}
++
++/*****************************************************************************/
++/* Get mode to apply when ANY */
++
++MMModemMode
++mm_xmm_get_modem_mode_any (const GArray *combinations)
++{
++    guint       i;
++    MMModemMode any = MM_MODEM_MODE_NONE;
++    guint       any_bits_set = 0;
++
++    for (i = 0; i < combinations->len; i++) {
++        MMModemModeCombination *combination;
++        guint                   bits_set;
++
++        combination = &g_array_index (combinations, MMModemModeCombination, i);
++        if (combination->preferred != MM_MODEM_MODE_NONE)
++            continue;
++        bits_set = mm_count_bits_set (combination->allowed);
++        if (bits_set > any_bits_set) {
++            any_bits_set = bits_set;
++            any = combination->allowed;
++        }
++    }
++
++    /* If combinations were processed via mm_xmm_parse_uact_test_response(),
++     * we're sure that there will be at least one combination with preferred
++     * 'none', so there must be some valid combination as result */
++    g_assert (any != MM_MODEM_MODE_NONE);
++    return any;
++}
++
++/*****************************************************************************/
++/* +XCESQ? response parser */
++
++gboolean
++mm_xmm_parse_xcesq_query_response (const gchar  *response,
++                                   guint        *out_rxlev,
++                                   guint        *out_ber,
++                                   guint        *out_rscp,
++                                   guint        *out_ecn0,
++                                   guint        *out_rsrq,
++                                   guint        *out_rsrp,
++                                   gint         *out_rssnr,
++                                   GError      **error)
++{
++    g_autoptr(GRegex)      r = NULL;
++    g_autoptr(GMatchInfo)  match_info = NULL;
++    GError                *inner_error = NULL;
++    guint                  rxlev = 99;
++    guint                  ber = 99;
++    guint                  rscp = 255;
++    guint                  ecn0 = 255;
++    guint                  rsrq = 255;
++    guint                  rsrp = 255;
++    gint                   rssnr = 255;
++    gboolean               success = FALSE;
++
++    g_assert (out_rxlev);
++    g_assert (out_ber);
++    g_assert (out_rscp);
++    g_assert (out_ecn0);
++    g_assert (out_rsrq);
++    g_assert (out_rsrp);
++    g_assert (out_rssnr);
++
++    /* Response may be e.g.:
++     * +XCESQ: 0,99,99,255,255,24,51,18
++     * +XCESQ: 0,99,99,46,31,255,255,255
++     * +XCESQ: 0,99,99,255,255,17,45,-2
++     */
++    r = g_regex_new ("\\+XCESQ: (\\d+),(\\d+),(\\d+),(\\d+),(\\d+),(\\d+),(\\d+),(-?\\d+)(?:\\r\\n)?", 0, 0, NULL);
++    g_assert (r != NULL);
++
++    g_regex_match_full (r, response, strlen (response), 0, 0, &match_info, &inner_error);
++    if (!inner_error && g_match_info_matches (match_info)) {
++        /* Ignore "n" value */
++        if (!mm_get_uint_from_match_info (match_info, 2, &rxlev)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read RXLEV");
++            goto out;
++        }
++        if (!mm_get_uint_from_match_info (match_info, 3, &ber)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read BER");
++            goto out;
++        }
++        if (!mm_get_uint_from_match_info (match_info, 4, &rscp)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read RSCP");
++            goto out;
++        }
++        if (!mm_get_uint_from_match_info (match_info, 5, &ecn0)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read Ec/N0");
++            goto out;
++        }
++        if (!mm_get_uint_from_match_info (match_info, 6, &rsrq)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read RSRQ");
++            goto out;
++        }
++        if (!mm_get_uint_from_match_info (match_info, 7, &rsrp)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read RSRP");
++            goto out;
++        }
++        if (!mm_get_int_from_match_info (match_info, 8, &rssnr)) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Couldn't read RSSNR");
++            goto out;
++        }
++        success = TRUE;
++    }
++
++out:
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return FALSE;
++    }
++
++    if (!success) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Couldn't parse +XCESQ response: %s", response);
++        return FALSE;
++    }
++
++    *out_rxlev = rxlev;
++    *out_ber = ber;
++    *out_rscp = rscp;
++    *out_ecn0 = ecn0;
++    *out_rsrq = rsrq;
++    *out_rsrp = rsrp;
++    *out_rssnr = rssnr;
++    return TRUE;
++}
++
++static gboolean
++rssnr_level_to_rssnr (gint      rssnr_level,
++                      gpointer  log_object,
++                      gdouble  *out_rssnr)
++{
++    if (rssnr_level <= 100 &&
++        rssnr_level >= -100) {
++        *out_rssnr = rssnr_level / 2.0;
++        return TRUE;
++    }
++
++    if (rssnr_level != 255)
++        mm_obj_warn (log_object, "unexpected RSSNR level: %u", rssnr_level);
++    return FALSE;
++}
++
++/*****************************************************************************/
++/* Get extended signal information */
++
++gboolean
++mm_xmm_xcesq_response_to_signal_info (const gchar  *response,
++                                      gpointer      log_object,
++                                      MMSignal    **out_gsm,
++                                      MMSignal    **out_umts,
++                                      MMSignal    **out_lte,
++                                      GError      **error)
++{
++    guint     rxlev = 0;
++    guint     ber = 0;
++    guint     rscp_level = 0;
++    guint     ecn0_level = 0;
++    guint     rsrq_level = 0;
++    guint     rsrp_level = 0;
++    gint      rssnr_level = 0;
++    gdouble   rssi = MM_SIGNAL_UNKNOWN;
++    gdouble   rscp = MM_SIGNAL_UNKNOWN;
++    gdouble   ecio = MM_SIGNAL_UNKNOWN;
++    gdouble   rsrq = MM_SIGNAL_UNKNOWN;
++    gdouble   rsrp = MM_SIGNAL_UNKNOWN;
++    gdouble   rssnr = MM_SIGNAL_UNKNOWN;
++    MMSignal *gsm = NULL;
++    MMSignal *umts = NULL;
++    MMSignal *lte = NULL;
++
++    if (!mm_xmm_parse_xcesq_query_response (response,
++                                            &rxlev, &ber,
++                                            &rscp_level, &ecn0_level,
++                                            &rsrq_level, &rsrp_level,
++                                            &rssnr_level, error))
++        return FALSE;
++
++    /* GERAN RSSI */
++    if (mm_3gpp_rxlev_to_rssi (rxlev, log_object, &rssi)) {
++        gsm = mm_signal_new ();
++        mm_signal_set_rssi (gsm, rssi);
++    }
++
++    /* ignore BER */
++
++    /* UMTS RSCP */
++    if (mm_3gpp_rscp_level_to_rscp (rscp_level, log_object, &rscp)) {
++        umts = mm_signal_new ();
++        mm_signal_set_rscp (umts, rscp);
++    }
++
++    /* UMTS EcIo (assumed EcN0) */
++    if (mm_3gpp_ecn0_level_to_ecio (ecn0_level, log_object, &ecio)) {
++        if (!umts)
++            umts = mm_signal_new ();
++        mm_signal_set_ecio (umts, ecio);
++    }
++
++    /* Calculate RSSI if we have ecio and rscp */
++    if (umts && ecio != -G_MAXDOUBLE && rscp != -G_MAXDOUBLE) {
++        mm_signal_set_rssi (umts, rscp - ecio);
++    }
++
++    /* LTE RSRQ */
++    if (mm_3gpp_rsrq_level_to_rsrq (rsrq_level, log_object, &rsrq)) {
++        lte = mm_signal_new ();
++        mm_signal_set_rsrq (lte, rsrq);
++    }
++
++    /* LTE RSRP */
++    if (mm_3gpp_rsrp_level_to_rsrp (rsrp_level, log_object, &rsrp)) {
++        if (!lte)
++            lte = mm_signal_new ();
++        mm_signal_set_rsrp (lte, rsrp);
++    }
++
++    /* LTE RSSNR */
++    if (rssnr_level_to_rssnr (rssnr_level, log_object, &rssnr)) {
++        if (!lte)
++            lte = mm_signal_new ();
++        mm_signal_set_snr (lte, rssnr);
++    }
++
++    if (!gsm && !umts && !lte) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                     "Couldn't build detailed signal info");
++        return FALSE;
++    }
++
++    if (out_gsm)
++        *out_gsm = gsm;
++    if (out_umts)
++        *out_umts = umts;
++    if (out_lte)
++        *out_lte = lte;
++
++    return TRUE;
++}
++
++/*****************************************************************************/
++/* AT+XLCSLSR=? response parser */
++
++static gboolean
++number_group_contains_value (const gchar  *group,
++                             const gchar  *group_name,
++                             guint         value,
++                             GError      **error)
++{
++    GArray   *aux;
++    guint     i;
++    gboolean  found;
++
++    aux = mm_parse_uint_list (group, NULL);
++    if (!aux) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
++                     "Unsupported +XLCSLSR format: invalid %s field format", group_name);
++        return FALSE;
++    }
++
++    found = FALSE;
++    for (i = 0; i < aux->len; i++) {
++        guint value_i;
++
++        value_i = g_array_index (aux, guint, i);
++        if (value == value_i) {
++            found = TRUE;
++            break;
++        }
++    }
++
++    g_array_unref (aux);
++    return found;
++}
++
++gboolean
++mm_xmm_parse_xlcslsr_test_response (const gchar  *response,
++                                    gboolean     *transport_protocol_invalid_supported,
++                                    gboolean     *transport_protocol_supl_supported,
++                                    gboolean     *standalone_position_mode_supported,
++                                    gboolean     *ms_assisted_based_position_mode_supported,
++                                    gboolean     *loc_response_type_nmea_supported,
++                                    gboolean     *gnss_type_gps_glonass_supported,
++                                    GError      **error)
++{
++    gboolean   ret = FALSE;
++    gchar    **groups = NULL;
++    GError    *inner_error = NULL;
++
++    /*
++     * AT+XLCSLSR=?
++     * +XLCSLSR:(0-2),(0-3), ,(0,1), ,(0,1),(0 -7200),(0-255),(0-1),(0-2),(1-256),(0,1)
++     *    transport_protocol:  2 (invalid) or 1 (supl)
++     *    pos_mode:            3 (standalone) or 2 (ms assisted/based)
++     *    client_id:           <empty>
++     *    client_id_type:      <empty>
++     *    mlc_number:          <empty>
++     *    mlc_number_type:     <empty>
++     *    interval:            1 (seconds)
++     *    service_type_id:     <empty>
++     *    pseudonym_indicator: <empty>
++     *    loc_response_type:   1 (NMEA strings)
++     *    nmea_mask:           118 (01110110: GGA,GSA,GSV,RMC,VTG)
++     *    gnss_type:           0 (GPS or GLONASS)
++     */
++    response = mm_strip_tag (response, "+XLCSLSR:");
++    groups = mm_split_string_groups (response);
++
++    /* We expect 12 groups */
++    if (g_strv_length (groups) < 12) {
++        inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
++                                   "Unsupported +XLCSLSR format: expected 12 fields");
++        goto out;
++    }
++
++    if (transport_protocol_invalid_supported) {
++        *transport_protocol_invalid_supported = number_group_contains_value (groups[0],
++                                                                             "transport protocol",
++                                                                             2, /* invalid */
++                                                                             &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    if (transport_protocol_supl_supported) {
++        *transport_protocol_supl_supported = number_group_contains_value (groups[0],
++                                                                          "transport protocol",
++                                                                          1, /* supl */
++                                                                          &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    if (standalone_position_mode_supported) {
++        *standalone_position_mode_supported = number_group_contains_value (groups[1],
++                                                                           "position mode",
++                                                                           3, /* standalone */
++                                                                           &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    if (ms_assisted_based_position_mode_supported) {
++        *ms_assisted_based_position_mode_supported = number_group_contains_value (groups[1],
++                                                                                  "position mode",
++                                                                                  2, /* ms assisted/based */
++                                                                                  &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    if (loc_response_type_nmea_supported) {
++        *loc_response_type_nmea_supported = number_group_contains_value (groups[9],
++                                                                         "location response type",
++                                                                         1, /* NMEA */
++                                                                         &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    if (gnss_type_gps_glonass_supported) {
++        *gnss_type_gps_glonass_supported = number_group_contains_value (groups[11],
++                                                                        "gnss type",
++                                                                        0, /* GPS/GLONASS */
++                                                                        &inner_error);
++        if (inner_error)
++            goto out;
++    }
++
++    ret = TRUE;
++
++ out:
++    g_strfreev (groups);
++
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return FALSE;
++    }
++
++    return ret;
++}
++
++/*****************************************************************************/
++/* AT+XLCSSLP? response parser */
++
++gboolean
++mm_xmm_parse_xlcsslp_query_response (const gchar  *response,
++                                     gchar       **supl_address,
++                                     GError      **error)
++{
++    g_autoptr(GRegex)      r = NULL;
++    g_autoptr(GMatchInfo)  match_info = NULL;
++    GError                *inner_error = NULL;
++    gchar                 *address = NULL;
++    guint                  port = 0;
++
++    /*
++     * E.g.:
++     *  +XLCSSLP:1,"www.spirent-lcs.com",7275
++     */
++
++    r = g_regex_new ("\\+XLCSSLP:\\s*(\\d+),([^,]*),(\\d+)(?:\\r\\n)?",
++                     G_REGEX_DOLLAR_ENDONLY | G_REGEX_RAW, 0, NULL);
++    g_assert (r != NULL);
++
++    g_regex_match_full (r, response, strlen (response), 0, 0, &match_info, &inner_error);
++    if (!inner_error && g_match_info_matches (match_info)) {
++        guint  type;
++
++        /* We only support types 0 (IPv4) and 1 (FQDN) */
++        mm_get_uint_from_match_info (match_info, 1, &type);
++        if (type != 0 && type != 1) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
++                                       "Unsupported SUPL server address type (%u) in response: %s", type, response);
++            goto out;
++        }
++
++        address = mm_get_string_unquoted_from_match_info (match_info, 2);
++        mm_get_uint_from_match_info (match_info, 3, &port);
++        if (!port) {
++            inner_error = g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                       "Invalid SUPL address port number in response: %s", response);
++            goto out;
++        }
++    }
++
++out:
++    if (inner_error) {
++        g_propagate_error (error, inner_error);
++        return FALSE;
++    }
++
++    if (supl_address)
++        *supl_address = g_strdup_printf ("%s:%u", address, port);
++    g_free (address);
++
++    return TRUE;
++}
+diff --git a/src/plugins/xmmusb/mm-modem-helpers-xmm.h b/src/plugins/xmmusb/mm-modem-helpers-xmm.h
+new file mode 100644
+index 0000000..a18f066
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-modem-helpers-xmm.h
+@@ -0,0 +1,75 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details:
++ *
++ * Copyright (C) 2018 Aleksander Morgado <aleksander@aleksander.es>
++ */
++
++#ifndef MM_MODEM_HELPERS_XMM_H
++#define MM_MODEM_HELPERS_XMM_H
++
++#include <glib.h>
++#include <ModemManager.h>
++
++/* AT+XACT=? response parser */
++gboolean mm_xmm_parse_xact_test_response (const gchar  *response,
++                                          gpointer      logger,
++                                          GArray      **modes_out,
++                                          GArray      **bands_out,
++                                          GError      **error);
++
++/* AT+XACT? response parser */
++gboolean mm_xmm_parse_xact_query_response (const gchar             *response,
++                                           MMModemModeCombination  *mode_out,
++                                           GArray                 **bands_out,
++                                           GError                 **error);
++
++/* AT+XACT=X command builder */
++gchar *mm_xmm_build_xact_set_command (const MMModemModeCombination  *mode,
++                                      const GArray                  *bands,
++                                      GError                       **error);
++
++/* Mode to apply when ANY */
++MMModemMode mm_xmm_get_modem_mode_any (const GArray *combinations);
++
++gboolean mm_xmm_parse_xcesq_query_response (const gchar  *response,
++                                            guint        *out_rxlev,
++                                            guint        *out_ber,
++                                            guint        *out_rscp,
++                                            guint        *out_ecn0,
++                                            guint        *out_rsrq,
++                                            guint        *out_rsrp,
++                                            gint         *out_rssnr,
++                                            GError      **error);
++
++gboolean mm_xmm_xcesq_response_to_signal_info (const gchar  *response,
++                                               gpointer      log_object,
++                                               MMSignal    **out_gsm,
++                                               MMSignal    **out_umts,
++                                               MMSignal    **out_lte,
++                                               GError      **error);
++
++/* AT+XLCSLSR=? response parser */
++gboolean mm_xmm_parse_xlcslsr_test_response (const gchar  *response,
++                                             gboolean     *transport_protocol_invalid_supported,
++                                             gboolean     *transport_protocol_supl_supported,
++                                             gboolean     *standalone_position_mode_supported,
++                                             gboolean     *ms_assisted_based_position_mode_supported,
++                                             gboolean     *loc_response_type_nmea_supported,
++                                             gboolean     *gnss_type_gps_glonass_supported,
++                                             GError      **error);
++
++/* AT+XLCSSLP? response parser */
++gboolean mm_xmm_parse_xlcsslp_query_response (const gchar  *response,
++                                              gchar       **supl_address,
++                                              GError      **error);
++
++#endif  /* MM_MODEM_HELPERS_XMM_H */
+diff --git a/src/plugins/xmmusb/mm-plugin-xmmusb.c b/src/plugins/xmmusb/mm-plugin-xmmusb.c
+new file mode 100644
+index 0000000..49c72c7
+--- /dev/null
++++ b/src/plugins/xmmusb/mm-plugin-xmmusb.c
+@@ -0,0 +1,69 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++#include <string.h>
++#include <gmodule.h>
++
++#define _LIBMM_INSIDE_MM
++#include <libmm-glib.h>
++
++#include "mm-plugin-common.h"
++#include "mm-broadband-modem.h"
++#include "mm-log-object.h"
++
++#include "mm-broadband-modem-xmmusb.h"
++
++#define MM_TYPE_PLUGIN_XMMUSB mm_plugin_xmmusb_get_type ()
++MM_DEFINE_PLUGIN (XMMUSB, xmmusb, XmmUsb)
++
++static MMBaseModem *
++create_modem (MMPlugin *self,
++              const gchar *uid,
++              const gchar *physdev,
++              const gchar **drivers,
++              guint16 vendor,
++              guint16 product,
++              guint16 subsystem_vendor,
++              guint16 subsystem_device,
++              GList *probes,
++              GError **error)
++{
++    return MM_BASE_MODEM (mm_broadband_modem_xmmusb_new (uid,
++                                                           physdev,
++                                                           drivers,
++                                                           mm_plugin_get_name (self),
++                                                           vendor,
++                                                           product));
++}
++
++MM_PLUGIN_NAMED_CREATOR_SCOPE MMPlugin *
++mm_plugin_create_xmmusb (void)
++{
++    static const gchar *subsystems[] = { "tty", "net", NULL };
++    /* Intel XMM7360, plain-USB CDC-ACM+CDC-NCM variant (e.g. Fibocom
++     * L860-GL). NOT the PCIe/iosm/wwan-RPC variant already handled by
++     * the stock 'intel' plugin since MM 1.26. */
++    static const mm_uint16_pair product_ids[] = {
++        { 0x8087, 0x095a },
++    };
++
++    return MM_PLUGIN (
++        g_object_new (MM_TYPE_PLUGIN_XMMUSB,
++                      MM_PLUGIN_NAME,               MM_MODULE_NAME,
++                      MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
++                      MM_PLUGIN_ALLOWED_PRODUCT_IDS, product_ids,
++                      MM_PLUGIN_ALLOWED_AT,         TRUE,
++                      MM_PLUGIN_ICERA_PROBE,        FALSE,
++                      MM_PLUGIN_REMOVE_ECHO,        TRUE,
++                      NULL));
++}
++
++static void
++mm_plugin_xmmusb_init (MMPluginXmmUsb *self)
++{
++}
++
++static void
++mm_plugin_xmmusb_class_init (MMPluginXmmUsbClass *klass)
++{
++    MMPluginClass *plugin_class = MM_PLUGIN_CLASS (klass);
++    plugin_class->create_modem = create_modem;
++}
