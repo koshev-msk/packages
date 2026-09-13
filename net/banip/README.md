@@ -25,7 +25,7 @@ IP address blocking is commonly used to protect against brute force attacks, pre
 ## Quick Start
 For a typical setup these few steps are enough to get banIP up and running — see the sections below for details:
 1. Install the LuCI companion package: `apk update && apk add luci-app-banip` (this pulls in the `banip` backend as a dependency).
-2. Open LuCI under `Services → banIP`, tick `Enabled` and (recommended) set a `Startup Trigger Interface` to your WAN interface (avoid IPv6/wan6).
+2. Open LuCI under `Services → banIP`, tick `Enabled` and (recommended) set a `Startup Trigger Interface` to your WAN interface(s).
 3. Activate a small, sensible feed selection to start with, e.g. `cinsscore`, `debl`, `turris` and `doh` in their default chains (≈20K IPs).
 4. Start and verify the service:
 
@@ -117,7 +117,7 @@ For a typical setup these few steps are enough to get banIP up and running — s
 * Deduplicate IPs across all Sets (single IPs only, no intervals)
 * Implements BCP38 ingress filtering to prevent IP address spoofing
 * Provides comprehensive runtime information
-* Provides a detailed Set report, incl. a map that shows the geolocation of your own uplink addresses (in green) and the location of potential attackers (in red)
+* Provides a detailed Set report, incl. a map that shows the geolocation of your own uplink addresses (in green) and the location of potential attackers (in red), drawn from local country outlines without any tile service
 * Provides a Set search engine for certain IPs
 * Feed parsing by fast & flexible regex rulesets
 * Minimal status & error logging to syslog, enable debug logging to receive more output
@@ -147,7 +147,7 @@ For a typical setup these few steps are enough to get banIP up and running — s
 * Install the LuCI companion package `luci-app-banip` which also installs the main banIP package as a dependency
 * Enable the banIP system service (System -> Startup) and enable banIP itself (banIP -> General Settings)
 * It's strongly recommended to use the LuCI frontend to easily configure all aspects of banIP, the application is located in LuCI under the `Services` menu
-* It's also recommended to configure a `Startup Trigger Interface` to depend on your WAN ifup events during boot or restart of your router. Avoid IPv6 (wan6) interfaces here, as IPv6/netifd is chatty and would trigger frequent unnecessary banIP restarts
+* It's also recommended to configure a `Startup Trigger Interface` to depend on your WAN interface events during boot or restart of your router. Listing IPv6 interfaces (wan6) is fine as well: an interface event that only changed the uplink addresses refreshes the auto-allowed uplink entries in place, without a full banIP restart. This keeps the allowlist in sync with a dynamic IPv6 prefix
 * To be able to use banIP in a meaningful way, you must activate the service and possibly also activate a few blocklist feeds
 * If you're using a complex network setup, e.g. special tunnel interfaces, then untick the `Auto Detection` option under the `General Settings` tab and set the required options manually
 * Start the service with `/etc/init.d/banip start` and check everything is working by running `/etc/init.d/banip status`, also check the `Processing Log` tab
@@ -220,7 +220,7 @@ The `report` sub-command accepts an output mode: `text` (default, human-readable
 | ban_dev                 | list   | - / autodetect                | wan device(s), e.g. `eth2`                                                                                        |
 | ban_vlanallow           | list   | -                             | always allow certain VLAN forwards, e.g. br-lan.20                                                                |
 | ban_vlanblock           | list   | -                             | always block certain VLAN forwards, e.g. br-lan.10                                                                |
-| ban_trigger             | list   | -                             | logical reload trigger interface(s), e.g. `wan` (avoid IPv6 interfaces)                                           |
+| ban_trigger             | list   | -                             | logical reload trigger interface(s), e.g. `wan` and `wan6`                                                        |
 | ban_triggerdelay        | option | 20                            | trigger timeout during interface reload and boot                                                                  |
 | ban_deduplicate         | option | 1                             | deduplicate IP addresses across all active Sets (see optional feed flag `dup` below)                              |
 | ban_splitsize           | option | 0                             | split the processing/loading of Sets in chunks of n lines/members (saves RAM)                                     |
@@ -533,11 +533,23 @@ In addition to a tabular overview banIP reporting includes a GeoIP map in a moda
 
 To make this work, banIP uses the following external components:
 * [Leaflet](https://leafletjs.com/) is a lightweight open-source JavaScript library for interactive maps
-* [OpenStreetMap](https://www.openstreetmap.org/) provides the map data under an open-source license
-* [CARTO basemap styles](https://github.com/CartoDB/basemap-styles) based on [OpenMapTiles](https://openmaptiles.org/schema)
 * The free and quite fast [IP Geolocation API](https://ip-api.com/) to resolve the required IP/geolocation information
 
-Please note: the free ip-api.com batch endpoint is rate limited to 15 requests per minute per source IP. Requests beyond that limit are throttled with HTTP 429, and constantly exceeding the limit gets the IP banned for an hour — in both cases the map stays empty and banIP logs an info message. To stay below the limit banIP collects the top listed elements of all Sets, deduplicates them and resolves them in as few batch requests as possible (100 IPs each, the maximum the endpoint accepts). A setup with up to ~1500 mapped elements therefore needs no more than 15 requests per report run. If you run a large number of Sets and regenerate the report frequently, lower `ban_map` to `0` or reduce the number of active feeds.
+The basemap is no longer pulled from a tile service. CARTO started to require an API key for the raster basemaps at basemaps.cartocdn.com and watermarks every unauthenticated tile request, and a key is bound to a single customer, so it cannot be shipped with a package that lands on every installation. banIP therefore draws the basemap from country outlines that come with `luci-app-banip`: [Natural Earth](https://www.naturalearthdata.com) 1:110m, public domain, stripped of all attributes and simplified to 36 kB. No tile service is contacted anymore, but the map page still loads the Leaflet library from unpkg.com (integrity-checked via SRI and requested without cookies), so it needs a WAN connection. The outlines are enough to locate an IP, so the map does not zoom in beyond level 6 and labels the continents rather than the countries.
+
+**Optional: a higher detail basemap**
+
+The shipped 1:110m outlines are coarse around Scandinavia, the Greek islands and the smaller island states. If you want sharper coastlines, build the 1:50m variant with [mapshaper](https://github.com/mbloch/mapshaper) and drop it next to the shipped file. LuCI looks for it on every map run and falls back to the shipped outlines when it is missing, no config option is involved:
+
+```
+curl -sSLo ne50.geojson https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson
+mapshaper ne50.geojson -filter-fields -simplify 5% keep-shapes -o force precision=0.01 format=geojson world-50m.json
+scp world-50m.json root@openwrt:/www/luci-static/resources/view/banip/
+```
+
+The result is roughly 105 kB, about three times the shipped file. Please note: this file is not part of any package, so it is removed on sysupgrade unless you add its path to `/etc/sysupgrade.conf`, and it stays behind when `luci-app-banip` is uninstalled.
+
+Please note: the free ip-api.com batch endpoint is rate limited to 15 requests per minute per source IP. Requests beyond that limit are throttled with HTTP 429, and constantly exceeding the limit gets the IP banned for an hour — in both cases the affected part of the map stays empty and banIP logs an info message. To stay below the limit banIP collects the top listed elements of all Sets, deduplicates them and resolves them in batch requests of 100 IPs each (the maximum the endpoint accepts), capped at 15 requests per report run. Elements beyond ~1500 are left out of the map and banIP logs an info message. A report regenerated within 60 seconds of the last geo lookup reuses its map data instead of querying the service again. Please note that other clients behind the same public IP count against the same limit.
 
 **CGI interface to receive remote logging events**  
 banIP ships a basic cgi interface in `/www/cgi-bin/banip` to receive remote logging events (disabled by default). The cgi interface evaluates logging events via GET or POST request (see examples below). To enable the cgi interface set the following options:
@@ -701,5 +713,5 @@ If you still insist to donate some bucks ...
 
 No matter what you decide - thank you very much for your support!
 
-Have fun!
+Have fun!  
 Dirk
