@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray-core
 PKG_VERSION:=25.1.30
-PKG_RELEASE:=1
+PKG_RELEASE:=11
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
@@ -25,6 +25,21 @@ GO_PKG_LDFLAGS_X:= \
 
 include $(INCLUDE_DIR)/package.mk
 include ../../lang/golang/golang-package.mk
+
+# --- UPX support ---
+UPX:=$(STAGING_DIR_HOST)/bin/upx
+UPX_AVAILABLE:=$(shell [ -x "$(UPX)" ] && echo yes || echo no)
+
+ifeq ($(UPX_AVAILABLE),yes)
+define upxcompress
+	@echo "Compressing $(1) with UPX..."
+	$(UPX) --lzma --best $(1)
+endef
+else
+define upxcompress
+	@echo "UPX not found at $(UPX), skipping compression"
+endef
+endif
 
 define Package/xray/template
   TITLE:=A platform for building proxies to bypass network restrictions
@@ -69,7 +84,7 @@ define Package/xray-core/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
 	$(INSTALL_DIR) $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/main $(1)/usr/bin/xray
-
+	$(call upxcompress,$(1)/usr/sbin/xray)
 	$(INSTALL_DIR) $(1)/etc/xray/
 	$(INSTALL_DATA) $(CURDIR)/files/config.json.example $(1)/etc/xray/
 
