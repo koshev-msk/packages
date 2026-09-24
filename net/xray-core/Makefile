@@ -1,12 +1,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray-core
-PKG_VERSION:=25.1.30
-PKG_RELEASE:=11
+PKG_VERSION:=25.4.30
+PKG_RELEASE:=10
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=983ee395f085ed1b7fbe0152cb56a5b605a6f70a5645d427c7186c476f14894e
+PKG_HASH:=4caff81848262684934022dca91cd00b3f28287c29c8229654e226a2ff7990c3
 
 PKG_MAINTAINER:=Tianling Shen <cnsztl@immortalwrt.org>
 PKG_LICENSE:=MPL-2.0
@@ -84,7 +84,7 @@ define Package/xray-core/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
 	$(INSTALL_DIR) $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/main $(1)/usr/bin/xray
-	$(call upxcompress,$(1)/usr/sbin/xray)
+	$(call upxcompress,$(1)/usr/bin/xray)
 	$(INSTALL_DIR) $(1)/etc/xray/
 	$(INSTALL_DATA) $(CURDIR)/files/config.json.example $(1)/etc/xray/
 
