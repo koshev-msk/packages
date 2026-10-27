@@ -19,6 +19,7 @@ trm_netcheck="0"
 trm_autoadd="0"
 trm_randomize="0"
 trm_eviltwin="0"
+trm_wifireload="1"
 trm_mail="0"
 trm_mailtemplate="/etc/travelmate/mail.template"
 trm_vpnpgm="/etc/travelmate/travelmate.vpn"
@@ -75,12 +76,6 @@ f_system() {
 	#
 	[ -z "${trm_cores}" ] && trm_cores="$("${trm_grepcmd}" -cm16 '^processor' /proc/cpuinfo 2>/dev/null)"
 	case "${trm_cores}" in "" | 0 | *[!0-9]*) trm_cores="1" ;; esac
-
-	# trigger ntp sync if no lock file exists (to avoid multiple concurrent calls)
-	#
-	if [ ! -d "${trm_ntplock}" ]; then
-		"${trm_ubuscmd}" -S call hotplug.ntp call '{ "env": [ "ACTION=stratum" ] }' >/dev/null 2>&1
-	fi
 }
 
 # command selector
@@ -872,11 +867,11 @@ f_addsta() {
 f_net() {
 	local parse err_msg raw marker probe_host json_raw html_raw html_cp js_cp json_ec json_rc json_cp json_cp_url json_ed result="net nok"
 
-	# host of the configured probe url, used to spot foreign redirect targets
+	# host of the configured probe url without port, used to spot foreign redirect targets
 	#
 	probe_host="${trm_captiveurl#*://}"
 	probe_host="${probe_host%%/*}"
-	probe_host="$(printf "%s" "${probe_host}" | "${trm_awkcmd}" '{printf "%s",tolower($0)}')"
+	probe_host="$(printf "%s" "${probe_host}" | "${trm_awkcmd}" '{h=tolower($0);if(h~/^\[/)sub(/\].*$/,"]",h);else sub(/:[0-9]*$/,"",h);printf "%s",h}')"
 
 	# fetch captive-detection url, curl appends '%{json}' metadata behind a unique
 	# marker - splitting on the first curly brace would break on any response body
@@ -900,9 +895,10 @@ f_net() {
 			${parse}
 		EOF
 
-		# extract lowercased host portion of the effective url
+		# extract lowercased host portion of the effective url, strip the port as
+		# the host ends up in the dnsmasq rebind allowlist
 		#
-		json_cp="$(printf "%s" "${json_cp_url}" | "${trm_awkcmd}" 'BEGIN{FS="/"}{printf "%s",tolower($3)}')"
+		json_cp="$(printf "%s" "${json_cp_url}" | "${trm_awkcmd}" 'BEGIN{FS="/"}{h=tolower($3);if(h~/^\[/)sub(/\].*$/,"]",h);else sub(/:[0-9]*$/,"",h);printf "%s",h}')"
 		if [ "${json_ec}" = "0" ]; then
 
 			# request ended up on a foreign host: captive portal at that host
@@ -914,8 +910,8 @@ f_net() {
 			#
 			else
 				if [ "${json_rc}" = "200" ] || [ "${json_rc}" = "204" ]; then
-					html_cp="$(printf "%s" "${html_raw}" | "${trm_awkcmd}" 'match(tolower($0),/^.*<meta[ \t]+http-equiv=['\''"]*refresh.*[ \t;]url=/){print substr(tolower($0),RLENGTH+1)}' | "${trm_awkcmd}" 'BEGIN{FS="[:/]"}{printf "%s",$4;exit}')"
-					js_cp="$(printf "%s" "${html_raw}" | "${trm_awkcmd}" 'match(tolower($0),/^.*location\.href=['\''"]*/){print substr(tolower($0),RLENGTH+1)}' | "${trm_awkcmd}" 'BEGIN{FS="[:/]"}{printf "%s",$4;exit}')"
+					html_cp="$(printf "%s" "${html_raw}" | "${trm_awkcmd}" 'match(tolower($0),/^.*<meta[ \t]+http-equiv=['\''"]*refresh.*[ \t;]url=/){print substr(tolower($0),RLENGTH+1)}' | "${trm_awkcmd}" '{sub(/^[ \t"'\'']+/,"");sub(/^([a-z][a-z0-9+.-]*:)?\/\//,"");if($0~/^\[/)sub(/\].*$/,"]");else sub(/[:\/?#;>"'\'' \t].*$/,"");printf "%s",$0;exit}')"
+					js_cp="$(printf "%s" "${html_raw}" | "${trm_awkcmd}" 'match(tolower($0),/^.*location\.href=['\''"]*/){print substr(tolower($0),RLENGTH+1)}' | "${trm_awkcmd}" '{sub(/^[ \t"'\'']+/,"");sub(/^([a-z][a-z0-9+.-]*:)?\/\//,"");if($0~/^\[/)sub(/\].*$/,"]");else sub(/[:\/?#;>"'\'' \t].*$/,"");printf "%s",$0;exit}')"
 					if [ -n "${html_cp}" ]; then
 						result="net cp '${html_cp}'"
 					elif [ -n "${js_cp}" ]; then
@@ -935,6 +931,8 @@ f_net() {
 				if [ -n "${json_ed}" ] && [ "${json_ed}" != "${probe_host}" ]; then
 					result="net cp '${json_ed}'"
 				fi
+			elif [ -n "${json_cp}" ] && [ "${json_cp}" != "${probe_host}" ]; then
+				result="net cp '${json_cp}'"
 			fi
 		fi
 	fi
@@ -977,10 +975,12 @@ f_check() {
 		enabled="$(f_getval "enabled" "0")"
 	fi
 
-	# trigger wifi reload on disconnects (non-initial/dev) or on disabled-uplink dev events
+	# trigger wifi reload on disconnects (non-initial/dev), on disabled-uplink dev events
+	# or on idle dev events if requested by f_main (trm_wifireload)
 	#
 	if { [ "${mode}" != "initial" ] && [ "${mode}" != "dev" ] && [ "${status}" = "false" ]; } ||
-		{ [ "${mode}" = "dev" ] && { [ "${status}" = "false" ] || { [ "${trm_ifstatus}" != "${status}" ] && [ "${enabled}" = "0" ]; }; }; }; then
+		{ [ "${mode}" = "dev" ] && { { [ "${status}" = "false" ] && [ "${trm_wifireload}" = "1" ]; } ||
+			{ [ "${trm_ifstatus}" != "${status}" ] && [ "${enabled}" = "0" ]; }; }; }; then
 		f_wifi
 	fi
 
@@ -1467,7 +1467,7 @@ f_scan() {
 #
 f_main() {
 	local radio cnt retrycnt scan_list scan_essid scan_bssid scan_rsn scan_wpa scan_quality scan_open station_id retry_display
-	local section sta sta_essid sta_bssid sta_radio sta_mac open_sta open_essid esc_essid config_radio config_essid config_bssid
+	local section sta sta_essid sta_bssid sta_radio sta_mac open_sta open_essid esc_essid config_radio config_essid config_bssid wifi_status
 
 	# mark the run cycle as active, e.g. to distinguish 'processing' from an
 	# idle daemon in f_genstatus
@@ -1506,8 +1506,25 @@ f_main() {
 			f_check "dev" "true"
 			f_log "debug" "f_main-2    ::: config_radio: ${config_radio}, config_essid: \"${config_essid}\", config_bssid: ${config_bssid:-"-"}"
 		else
-			[ -n "$(uci -q changes "wireless")" ] && uci_commit "wireless"
+			# idle wifi reload only on committed wireless changes, on a radio not ready
+			# or on a failed scan in the previous cycle (trm_wifireload preset)
+			#
+			if [ -n "$(uci -q changes "wireless")" ]; then
+				uci_commit "wireless"
+				trm_wifireload="1"
+			elif [ "${trm_wifireload}" = "0" ]; then
+				wifi_status="$("${trm_ubuscmd}" -S call network.wireless status 2>/dev/null)"
+				for radio in ${trm_radiolist}; do
+					if [ "$(printf "%s" "${wifi_status}" | "${trm_jsoncmd}" -ql1 -e "@.${radio}.up")" != "true" ] ||
+						[ "$(printf "%s" "${wifi_status}" | "${trm_jsoncmd}" -ql1 -e "@.${radio}.pending")" != "false" ]; then
+						trm_wifireload="1"
+						break
+					fi
+				done
+			fi
+			f_log "debug" "f_main-2    ::: wifi_reload: ${trm_wifireload}"
 			f_check "dev" "false"
+			trm_wifireload="0"
 		fi
 		f_log "debug" "f_main-3    ::: radio_list: ${trm_radiolist:-"-"}, sta_list: ${trm_stalist:-"-"}"
 
@@ -1554,6 +1571,7 @@ f_main() {
 				fi
 				if [ -z "${scan_list}" ]; then
 					f_log "info" "no scan results on '${radio}'"
+					trm_wifireload="1"
 					continue 2
 				fi
 
@@ -1641,7 +1659,7 @@ f_main() {
 												f_reviveload "${sta_radio}" "${sta_essid}" "${sta_bssid}"
 											fi
 											f_log "info" "uplink has been disabled '${sta_radio}/${sta_essid}/${sta_bssid:-"-"}' (${retrycnt}/${retry_display})"
-											continue 2
+											continue 3
 										else
 											f_genstatus
 											f_log "info" "can't connect to uplink '${sta_radio}/${sta_essid}/${sta_bssid:-"-"}' (${retrycnt}/${retry_display})"
