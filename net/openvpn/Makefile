@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=openvpn
 
 PKG_VERSION:=2.7.8
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_URL:=\
 	https://build.openvpn.net/downloads/releases/ \
@@ -115,7 +115,7 @@ define Build/Configure
 			--disable-dco, \
 			$(if $(CONFIG_OPENVPN_$(BUILD_VARIANT)_ENABLE_DCO),--enable,--disable)-dco \
 		) \
-		$(if $(CONFIG_OPENVPN_OPENSSL),--with-crypto-library=openssl --with-openssl-engine=no) \
+		$(if $(CONFIG_OPENVPN_OPENSSL),--with-crypto-library=openssl --with-openssl-engine=yes) \
 		$(if $(CONFIG_OPENVPN_MBEDTLS),--with-crypto-library=mbedtls) \
 		$(if $(CONFIG_OPENVPN_WOLFSSL),--with-crypto-library=wolfssl) \
 	)
