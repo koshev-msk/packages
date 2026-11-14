@@ -1,0 +1,186 @@
+From bdd19a58c06abeee4445f840e029e8116d97aad6 Mon Sep 17 00:00:00 2001
+From: Konstantine <shevlakov@132lan.ru>
+Date: Fri, 13 Nov 2026 20:56:56 +0000
+Subject: [PATCH] options: add --disable-dyn-tls-crypt
+
+Dynamic tls-crypt (a tls-crypt key derived from the TLS key material
+for renegotiations) is announced and accepted automatically since
+OpenVPN 2.7. Add an option to opt out of it:
+
+- do not set IV_PROTO_DYN_TLS_CRYPT in the peer info
+- ignore the flag announced by the peer (server and P2P mode), so
+  dyn-tls-crypt is not pushed in protocol-flags
+
+The option works on the side where it is set (client, server or both)
+and renegotiations keep using the static tls-crypt/tls-crypt-v2 key.
+
+Signed-off-by: Konstantine <shevlakov@132lan.ru>
+---
+ doc/man-sections/protocol-options.rst | 10 ++++++++++
+ src/openvpn/init.c                    |  2 ++
+ src/openvpn/multi.c                   |  2 +-
+ src/openvpn/options.c                 | 18 +++++++++++++++++-
+ src/openvpn/options.h                 |  4 ++++
+ src/openvpn/ssl.c                     |  5 ++++-
+ src/openvpn/ssl_common.h              |  3 +++
+ src/openvpn/ssl_ncp.c                 |  2 +-
+ 8 files changed, 42 insertions(+), 4 deletions(-)
+
+diff --git a/doc/man-sections/protocol-options.rst b/doc/man-sections/protocol-options.rst
+index 52ce5a8..73148fb 100644
+--- a/doc/man-sections/protocol-options.rst
++++ b/doc/man-sections/protocol-options.rst
+@@ -223,6 +223,16 @@ configured in a compatible way between both the local and remote side.
+   allows for a graceful transition from old to new key, and removes the key
+   renegotiation sequence from the critical path of tunnel data forwarding.
+ 
++--disable-dyn-tls-crypt
++  Do not use dynamic tls-crypt. By default OpenVPN 2.7 and later derive a
++  new tls-crypt key from the TLS key material (RFC 5705) for the control
++  channel after the first handshake, when both peers support it and
++  :code:`--tls-crypt` or :code:`--tls-crypt-v2` is used. With this option
++  the support is not announced to the peer and the announcement of the
++  peer is ignored, so renegotiations keep using the static tls-crypt key.
++  The option takes effect on the side where it is set, so it can be used on
++  the client, on the server or on both.
++
+ --force-tls-key-material-export
+   This option is only available in --mode server and forces to use
+   Keying Material Exporters (RFC 5705) for clients. This can be used to
+diff --git a/src/openvpn/init.c b/src/openvpn/init.c
+index 2f09b0f..483c743 100644
+--- a/src/openvpn/init.c
++++ b/src/openvpn/init.c
+@@ -3341,6 +3341,8 @@ do_init_crypto_tls(struct context *c, const unsigned int flags)
+         to.data_epoch_supported = true;
+     }
+ 
++    to.disable_dyn_tls_crypt = options->disable_dyn_tls_crypt;
++
+     /* should we not xmit any packets until we get an initial
+      * response from client? */
+     if (to.server && (c->mode == CM_CHILD_TCP || (c->mode == CM_P2P && options->ce.proto == PROTO_TCP_SERVER)))
+diff --git a/src/openvpn/multi.c b/src/openvpn/multi.c
+index b3a1ff8..2c51e27 100644
+--- a/src/openvpn/multi.c
++++ b/src/openvpn/multi.c
+@@ -1792,7 +1792,7 @@ multi_client_set_protocol_options(struct context *c)
+                                           "supports this feature (OpenVPN 2.6.0+).");
+         return false;
+     }
+-    if (proto & IV_PROTO_DYN_TLS_CRYPT)
++    if ((proto & IV_PROTO_DYN_TLS_CRYPT) && !o->disable_dyn_tls_crypt)
+     {
+         o->imported_protocol_flags |= CO_USE_DYNAMIC_TLS_CRYPT;
+     }
+diff --git a/src/openvpn/options.c b/src/openvpn/options.c
+index 847572c..b3c64a4 100644
+--- a/src/openvpn/options.c
++++ b/src/openvpn/options.c
+@@ -628,6 +628,8 @@ static const char usage_message[] =
+     "                  after new key renegotiation begins (default=%d).\n"
+     "--single-session: Allow only one session (reset state on restart).\n"
+     "--tls-exit      : Exit on TLS negotiation failure.\n"
++    "--disable-dyn-tls-crypt : Do not use dynamic tls-crypt (tls-crypt key derived\n"
++    "                  from TLS key material) for renegotiations.\n"
+     "--tls-auth f [d]: Add an additional layer of authentication on top of the TLS\n"
+     "                  control channel to protect against attacks on the TLS stack\n"
+     "                  and DoS attacks.\n"
+@@ -1449,6 +1451,7 @@ show_p2mp_parms(const struct options *o)
+     SHOW_BOOL(auth_user_pass_verify_script_via_file);
+     SHOW_BOOL(auth_token_generate);
+     SHOW_BOOL(force_key_material_export);
++    SHOW_BOOL(disable_dyn_tls_crypt);
+     SHOW_INT(auth_token_lifetime);
+     SHOW_STR_INLINE(auth_token_secret_file);
+ #if PORT_SHARE
+@@ -8509,7 +8512,15 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
+             }
+             else if (streq(p[j], "dyn-tls-crypt"))
+             {
+-                options->imported_protocol_flags |= CO_USE_DYNAMIC_TLS_CRYPT;
++                if (options->disable_dyn_tls_crypt)
++                {
++                    msg(M_WARN, "WARNING: ignoring protocol-flags dyn-tls-crypt, "
++                                "--disable-dyn-tls-crypt is set");
++                }
++                else
++                {
++                    options->imported_protocol_flags |= CO_USE_DYNAMIC_TLS_CRYPT;
++                }
+             }
+             else if (streq(p[j], "aead-epoch"))
+             {
+@@ -8521,6 +8532,11 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
+             }
+         }
+     }
++    else if (streq(p[0], "disable-dyn-tls-crypt") && !p[1])
++    {
++        VERIFY_PERMISSION(OPT_P_GENERAL);
++        options->disable_dyn_tls_crypt = true;
++    }
+     else if (streq(p[0], "force-tls-key-material-export"))
+     {
+         VERIFY_PERMISSION(OPT_P_GENERAL);
+diff --git a/src/openvpn/options.h b/src/openvpn/options.h
+index 852144d..476ce3e 100644
+--- a/src/openvpn/options.h
++++ b/src/openvpn/options.h
+@@ -709,6 +709,10 @@ struct options
+     /* force using TLS key material export for data channel key generation */
+     bool force_key_material_export;
+ 
++    /* do not advertise or accept dynamic tls-crypt (TLS-EKM derived
++     * tls-crypt key for renegotiations) */
++    bool disable_dyn_tls_crypt;
++
+     bool vlan_tagging;
+     enum vlan_acceptable_frames vlan_accept;
+     uint16_t vlan_pvid;
+diff --git a/src/openvpn/ssl.c b/src/openvpn/ssl.c
+index a2eee6a..cda5db2 100644
+--- a/src/openvpn/ssl.c
++++ b/src/openvpn/ssl.c
+@@ -2023,7 +2023,10 @@ push_peer_info(struct buffer *buf, struct tls_session *session)
+         buf_printf(&out, "IV_CIPHERS=%s\n", session->opt->config_ncp_ciphers);
+ 
+         iv_proto |= IV_PROTO_TLS_KEY_EXPORT;
+-        iv_proto |= IV_PROTO_DYN_TLS_CRYPT;
++        if (!session->opt->disable_dyn_tls_crypt)
++        {
++            iv_proto |= IV_PROTO_DYN_TLS_CRYPT;
++        }
+ 
+         buf_printf(&out, "IV_PROTO=%d\n", iv_proto);
+ 
+diff --git a/src/openvpn/ssl_common.h b/src/openvpn/ssl_common.h
+index 9c90242..e68958d 100644
+--- a/src/openvpn/ssl_common.h
++++ b/src/openvpn/ssl_common.h
+@@ -378,6 +378,9 @@ struct tls_options
+      * implementations */
+     bool data_epoch_supported;
+ 
++    /** do not advertise or accept dynamic tls-crypt */
++    bool disable_dyn_tls_crypt;
++
+     bool tls_crypt_v2;
+     const char *tls_crypt_v2_verify_script;
+     int tls_crypt_v2_max_age;
+diff --git a/src/openvpn/ssl_ncp.c b/src/openvpn/ssl_ncp.c
+index 686f823..c222bc2 100644
+--- a/src/openvpn/ssl_ncp.c
++++ b/src/openvpn/ssl_ncp.c
+@@ -462,7 +462,7 @@ p2p_ncp_set_options(struct tls_multi *multi, struct tls_session *session, const
+             }
+         }
+     }
+-    if (iv_proto_peer & IV_PROTO_DYN_TLS_CRYPT)
++    if ((iv_proto_peer & IV_PROTO_DYN_TLS_CRYPT) && !session->opt->disable_dyn_tls_crypt)
+     {
+         session->opt->crypto_flags |= CO_USE_DYNAMIC_TLS_CRYPT;
+     }
+-- 
+2.43.0
+
