@@ -8,13 +8,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=rtorrent
-PKG_VERSION:=0.15.5
+PKG_VERSION:=0.16.28
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/rakshasa/rtorrent
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
-PKG_MIRROR_HASH:=77dc339aa5a2c10d490db7e732d8ff61f2a6cc736eb5224b641c27abbf74e03a
+PKG_MIRROR_HASH:=5ab09982ea49ed1486985c47e88091a9e06006e49553f3a4c093b775cee6251e
 
 PKG_MAINTAINER:=Rosen Penev <rosenp@gmail.com>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -33,7 +33,7 @@ define Package/rtorrent/Default
   CATEGORY:=Network
   TITLE:=BitTorrent client for ncurses
   URL:=https://github.com/rakshasa/rtorrent
-  DEPENDS:=+libcurl +libncurses +libatomic +libopenssl +libstdcpp +zlib
+  DEPENDS:=+libtorrent +libncurses +libstdcpp +zlib
 endef
 
 define Package/rtorrent/Default/description
@@ -56,7 +56,7 @@ endef
 define Package/rtorrent-rpc
 $(call Package/rtorrent/Default)
   VARIANT:=rpc
-  DEPENDS+=+xmlrpc-c-server
+  DEPENDS+=+libxml2
   TITLE+=(with rpc support)
 endef
 
@@ -66,18 +66,17 @@ $(call Package/rtorrent/Default/description)
 endef
 
 CONFIGURE_ARGS += \
-	--enable-static \
-	--disable-shared \
+	--enable-shared \
+	--disable-static \
 	--disable-debug \
 	--with-ncurses \
 	$(if $(CONFIG_IPV6),--enable,--disable)-ipv6
 
 ifeq ($(BUILD_VARIANT),rpc)
-CONFIGURE_ARGS += --with-xmlrpc-c
+CONFIGURE_ARGS += --with-xmlrpc-tinyxml2
 endif
 
-CONFIGURE_VARS = \
-	ax_cv_cxx_compile_cxx17=yes
+TARGET_CXXFLAGS += -std=gnu++20
 
 define Package/rtorrent/install
 	$(INSTALL_DIR) $(1)/usr/bin

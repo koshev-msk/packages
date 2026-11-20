@@ -1,0 +1,36 @@
+From e611ed835b0c9482602fbaf9dc234146722d6b1b Mon Sep 17 00:00:00 2001
+From: Konstantine <shevlakov@132lan.ru>
+Date: Fri, 20 Nov 2026 03:59:21 +0000
+Subject: [PATCH] m4: add MIPS to the Linux cacheline size fallback
+
+On MIPS the kernel UAPI <linux/cache.h> does not provide a usable
+SMP_CACHE_BYTES (L1_CACHE_BYTES lives in asm/cache.h, which is not
+exported), so TORRENT_CHECK_CACHELINE falls through to the host_cpu
+switch, which has no MIPS entry and aborts configure:
+
+  Unrecognized CPU architecture (mipsel) on Linux fallback path.
+
+Use 64 bytes, which covers the 32-byte lines of the common MIPS32 cores
+(24K, 74K, 1004K) and is only used for alignas() against false sharing.
+---
+ scripts/common.m4 | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/scripts/common.m4 b/scripts/common.m4
+index 2d42209..bcc900f 100644
+--- a/scripts/common.m4
++++ b/scripts/common.m4
+@@ -126,6 +126,10 @@ AC_DEFUN([TORRENT_CHECK_CACHELINE], [
+             AC_MSG_RESULT([linux fallback LoongArch 64 bytes])
+             AC_DEFINE([LT_SMP_CACHE_BYTES], 64, [Fallback 64-byte alignment for Linux LoongArch hardware.])
+             ;;
++          mips*)
++            AC_MSG_RESULT([linux fallback MIPS 64 bytes])
++            AC_DEFINE([LT_SMP_CACHE_BYTES], 64, [Fallback 64-byte alignment for Linux MIPS hardware.])
++            ;;
+           *)
+             AC_MSG_RESULT([unrecognized CPU arch on Linux header fallback])
+             AC_MSG_FAILURE([Unrecognized CPU architecture ($host_cpu) on Linux fallback path. Aborting build.])
+-- 
+2.43.0
+

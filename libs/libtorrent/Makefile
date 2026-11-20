@@ -8,13 +8,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libtorrent
-PKG_VERSION:=0.15.5
+PKG_VERSION:=0.16.28
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/rakshasa/libtorrent
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
-PKG_MIRROR_HASH:=f5baa923bf45b84a2d1a8bc279815fc5d4f460e581e2d0e3070b97f134301378
+#PKG_MIRROR_HASH:=f5baa923bf45b84a2d1a8bc279815fc5d4f460e581e2d0e3070b97f134301378
+PKG_MIRROR_HASH:=38214a3fcbad5f09293ce96b5725aaef666156b0fabc2b47b5160d4ab86e271f
 
 PKG_MAINTAINER:=Rosen Penev <rosenp@gmail.com>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -31,8 +32,7 @@ define Package/libtorrent
   CATEGORY:=Libraries
   TITLE:=Rakshasa's BitTorrent library
   URL:=https://rakshasa.github.io/rtorrent/
-  DEPENDS:=+libopenssl +libstdcpp +zlib
-  BUILDONLY:=1
+  DEPENDS:=+libcurl +libopenssl +libstdcpp +zlib
 endef
 
 define Package/libtorrent/description
@@ -45,7 +45,7 @@ endef
 
 CONFIGURE_ARGS += \
 	--enable-shared \
-	--enable-static \
+	--disable-static \
 	--disable-aligned \
 	--disable-debug \
 	--disable-instrumentation \
@@ -53,16 +53,23 @@ CONFIGURE_ARGS += \
 	--with-zlib=$(STAGING_DIR)/usr \
 	--without-kqueue
 
-CONFIGURE_VARS = \
-	ax_cv_cxx_compile_cxx17=yes
+TARGET_CXXFLAGS += -std=gnu++20
+
+
+define Package/libtorrent/install
+	$(INSTALL_DIR) $(1)/usr/lib
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libtorrent.so* $(1)/usr/lib/
+endef
 
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include
 	$(CP) $(PKG_INSTALL_DIR)/usr/include/torrent $(1)/usr/include/
 	$(INSTALL_DIR) $(1)/usr/lib
-	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libtorrent.a $(1)/usr/lib/
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libtorrent.* $(1)/usr/lib/
 	$(INSTALL_DIR) $(1)/usr/lib/pkgconfig
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/pkgconfig/libtorrent.pc $(1)/usr/lib/pkgconfig/
 endef
+
+
 
 $(eval $(call BuildPackage,libtorrent))
